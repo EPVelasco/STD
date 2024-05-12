@@ -199,9 +199,9 @@ int main(int argc, char **argv) {
                                                     10);
 
   ros::Subscriber subLaserCloud = nh.subscribe<sensor_msgs::PointCloud2>(
-      "/cloud_registered_body", 100, laserCloudHandler);
+      "/velodyne_points", 100, laserCloudHandler);
   ros::Subscriber subOdom =
-      nh.subscribe<nav_msgs::Odometry>("/Odometry", 100, OdomHandler);
+      nh.subscribe<nav_msgs::Odometry>("/odom", 100, OdomHandler);
 
   STDescManager *std_manager = new STDescManager(config_setting);
 

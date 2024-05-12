@@ -81,9 +81,9 @@ void read_parameters(ros::NodeHandle &nh, ConfigSetting &config_setting) {
                    0.2);
 
   // candidate search
-  nh.param<int>("skip_near_num", config_setting.skip_near_num_, 50);
-  nh.param<int>("candidate_num", config_setting.candidate_num_, 50);
-  nh.param<int>("sub_frame_num", config_setting.sub_frame_num_, 10);
+  nh.param<int>("skip_near_num", config_setting.skip_near_num_, 10);
+  nh.param<int>("candidate_num", config_setting.candidate_num_, 10);
+  nh.param<int>("sub_frame_num", config_setting.sub_frame_num_, 2);
   nh.param<double>("rough_dis_threshold", config_setting.rough_dis_threshold_,
                    0.01);
   nh.param<double>("vertex_diff_threshold",
