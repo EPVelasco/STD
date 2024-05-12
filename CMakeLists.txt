@@ -90,3 +90,11 @@ target_link_libraries(online_demo
         ${OpenCV_LIBS}
         ${CERES_LIBRARIES}
         gtsam)
+
+add_executable(std_example demo/std_extractor.cpp src/STDesc.cpp )
+        target_link_libraries(std_example
+                ${catkin_LIBRARIES}
+                ${PCL_LIBRARIES}
+                ${OpenCV_LIBS}
+                ${CERES_LIBRARIES}
+                gtsam)

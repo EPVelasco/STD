@@ -1,0 +1,17 @@
+<launch>
+<!-- Launch file for Livox AVIA LiDAR -->
+
+  <arg name="rviz" default="false" />
+  <rosparam command="load" file="$(find std_detector)/config/config_kitti.yaml" />
+  <node 
+		pkg="std_detector" 
+		type="std_example" 
+		name="std_example" 
+		output="screen" 
+	/>
+ 
+  <group if="$(arg rviz)">
+    <node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz" args="-d $(find std_detector)/rviz_cfg/demo.rviz" />
+  </group>
+
+</launch>
