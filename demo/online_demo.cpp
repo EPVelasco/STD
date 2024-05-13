@@ -103,6 +103,44 @@ void update_poses(const gtsam::Values &estimates,
   }
 }
 
+void convertToMarkers(const std::vector<STDesc>& stds, visualization_msgs::MarkerArray& marker_array) {
+        int id = 0;
+        for (const auto& std : stds) {
+            visualization_msgs::Marker marker;
+            marker.header.frame_id = "camera_init";
+            marker.header.stamp = ros::Time::now();
+            marker.ns = "std_descriptors";
+            marker.id = id++;
+            marker.type = visualization_msgs::Marker::LINE_LIST;
+            marker.action = visualization_msgs::Marker::ADD;
+            marker.scale.x = 0.01;
+            marker.color.r = 1.0;
+            marker.color.g = 0.0;
+            marker.color.b = 0.0;
+            marker.color.a = 1.0;
+
+            geometry_msgs::Point p1, p2, p3;
+            p1.x = std.vertex_A_(0);
+            p1.y = std.vertex_A_(1);
+            p1.z = std.vertex_A_(2);
+            p2.x = std.vertex_B_(0);
+            p2.y = std.vertex_B_(1);
+            p2.z = std.vertex_B_(2);
+            p3.x = std.vertex_C_(0);
+            p3.y = std.vertex_C_(1);
+            p3.z = std.vertex_C_(2);
+
+            marker.points.push_back(p1);
+            marker.points.push_back(p2);
+            marker.points.push_back(p2);
+            marker.points.push_back(p3);
+            marker.points.push_back(p3);
+            marker.points.push_back(p1);
+
+            marker_array.markers.push_back(marker);
+        }
+    }
+
 void visualizeLoopClosure(
     const ros::Publisher &publisher,
     const std::vector<std::pair<int, int>> &loop_container,
@@ -189,6 +227,10 @@ int main(int argc, char **argv) {
 
   ros::Publisher pubCorrectCloud =
       nh.advertise<sensor_msgs::PointCloud2>("/cloud_correct", 10000);
+  
+  ros::Publisher pubkeycurrent =
+      nh.advertise<visualization_msgs::MarkerArray>("/std_descriptors", 1);
+
   ros::Publisher pubCorrectPath =
       nh.advertise<nav_msgs::Path>("/correct_path", 100000);
 
@@ -305,6 +347,13 @@ int main(int argc, char **argv) {
         // step1. Descriptor Extraction
         std::vector<STDesc> stds_vec;
         std_manager->GenerateSTDescs(key_cloud, stds_vec);
+
+        ////// visualizacion de los keypoints
+        visualization_msgs::MarkerArray marker_array;
+        convertToMarkers(stds_vec, marker_array);
+        pubkeycurrent.publish(marker_array);
+
+        //////////////////////////////////////////
 
         // step2. Searching Loop
         std::pair<int, double> search_result(-1, 0);

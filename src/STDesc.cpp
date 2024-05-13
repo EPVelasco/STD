@@ -554,6 +554,8 @@ void STDescManager::corner_extractor(
     const pcl::PointCloud<pcl::PointXYZI>::Ptr &input_cloud,
     pcl::PointCloud<pcl::PointXYZINormal>::Ptr &corner_points) {
 
+  // ROS_INFO("Corner input_cloud %lu points", input_cloud->points.size());    
+
   pcl::PointCloud<pcl::PointXYZINormal>::Ptr prepare_corner_points(
       new pcl::PointCloud<pcl::PointXYZINormal>);
 
@@ -567,6 +569,9 @@ void STDescManager::corner_extractor(
       }
     }
   }
+  
+  // ROS_INFO("Voxel Round %lu points", voxel_round.size());
+
   for (auto iter = voxel_map.begin(); iter != voxel_map.end(); iter++) {
     if (!iter->second->plane_ptr_->is_plane_) {
       VOXEL_LOC current_position = iter->first;
@@ -586,7 +591,7 @@ void STDescManager::corner_extractor(
           }
           // if no plane near the voxel, skip
           if (use == false) {
-            continue;
+            continue;            
           }
           // only project voxels with points num > 10
           if (current_octo->voxel_points_.size() > 10) {
@@ -645,6 +650,7 @@ void STDescManager::corner_extractor(
       }
     }
   }
+
   non_maxi_suppression(prepare_corner_points);
 
   if (config_setting_.maximum_corner_num_ > prepare_corner_points->size()) {
@@ -667,6 +673,15 @@ void STDescManager::extract_corner(
     const Eigen::Vector3d &proj_center, const Eigen::Vector3d proj_normal,
     const std::vector<Eigen::Vector3d> proj_points,
     pcl::PointCloud<pcl::PointXYZINormal>::Ptr &corner_points) {
+
+  
+  // ROS_INFO("proj_center %lu points", proj_center.size());
+  // ROS_INFO("proj_normal %lu points", proj_normal.size());
+  // ROS_INFO("proj_points %lu points", proj_points.size());
+  // ROS_INFO("Received corner_points %lu points", corner_points->points.size());
+
+
+  
 
   double resolution = config_setting_.proj_image_resolution_;
   double dis_threshold_min = config_setting_.proj_dis_min_;
@@ -885,10 +900,14 @@ void STDescManager::extract_corner(
 
 void STDescManager::non_maxi_suppression(
     pcl::PointCloud<pcl::PointXYZINormal>::Ptr &corner_points) {
+
   std::vector<bool> is_add_vec;
   pcl::PointCloud<pcl::PointXYZINormal>::Ptr prepare_key_cloud(
       new pcl::PointCloud<pcl::PointXYZINormal>);
   pcl::KdTreeFLANN<pcl::PointXYZINormal> kd_tree;
+
+  // ROS_INFO("Received point in non_maxi_supperssion %lu", corner_points->points.size());
+
   for (auto pi : corner_points->points) {
     prepare_key_cloud->push_back(pi);
     is_add_vec.push_back(true);
