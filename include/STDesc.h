@@ -310,6 +310,9 @@ public:
       const pcl::PointCloud<pcl::PointXYZINormal>::Ptr &target_cloud,
       std::pair<Eigen::Vector3d, Eigen::Matrix3d> &transform);
 
+  void MatchConsecutiveFrames(const std::vector<STDesc>& prev_descs, const std::vector<STDesc>& curr_descs, std::vector<std::pair<STDesc, STDesc>>& matched_pairs);
+  void publish_matched_pairs(const std::vector<std::pair<STDesc, STDesc>>& matched_pairs, const ros::Publisher& pub);
+
 private:
   /*Following are sub-processing functions*/
 

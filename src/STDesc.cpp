@@ -184,7 +184,8 @@ void publish_std_pairs(
   // Don't forget to set the alpha!
   m_line.scale.x = 0.25;
   m_line.pose.orientation.w = 1.0;
-  m_line.header.frame_id = "camera_init";
+  //m_line.header.frame_id = "camera_init";
+  m_line.header.frame_id = "velodyne";
   m_line.id = 0;
   int max_pub_cnt = 1;
   for (auto var : match_std_pairs) {
@@ -296,7 +297,7 @@ void publish_std_pairs(
     m_line.points.clear();
   }
   for (int j = 0; j < 100 * 6; j++) {
-    m_line.color.a = 0.00;
+    m_line.color.a = 0.001;
     ma_line.markers.push_back(m_line);
     m_line.id++;
   }
@@ -357,6 +358,8 @@ void STDescManager::SearchLoop(
   std::vector<STDMatchList> candidate_matcher_vec;
   candidate_selector(stds_vec, candidate_matcher_vec);
 
+  std::cout<< "Candidate selector size: " <<  candidate_matcher_vec.size() <<std::endl;
+
   auto t2 = std::chrono::high_resolution_clock::now();
   // step2, select best candidates from rough candidates
   double best_score = 0;
@@ -364,8 +367,9 @@ void STDescManager::SearchLoop(
   unsigned int triggle_candidate = -1;
   std::pair<Eigen::Vector3d, Eigen::Matrix3d> best_transform;
   std::vector<std::pair<STDesc, STDesc>> best_sucess_match_vec;
+  double verify_score;
   for (size_t i = 0; i < candidate_matcher_vec.size(); i++) {
-    double verify_score = -1;
+    verify_score = -1;
     std::pair<Eigen::Vector3d, Eigen::Matrix3d> relative_pose;
     std::vector<std::pair<STDesc, STDesc>> sucess_match_vec;
     candidate_verify(candidate_matcher_vec[i], verify_score, relative_pose,
@@ -383,6 +387,11 @@ void STDescManager::SearchLoop(
   // std::cout << "[Time] candidate selector: " << time_inc(t2, t1)
   //           << " ms, candidate verify: " << time_inc(t3, t2) << "ms"
   //           << std::endl;
+
+  std::cout << "[Data]: verify_score " << verify_score 
+            << ", best_score " << best_score
+            << ", config ICP " << config_setting_.icp_threshold_ 
+            << std::endl;
 
   if (best_score > config_setting_.icp_threshold_) {
     loop_result = std::pair<int, double>(best_candidate_id, best_score);
@@ -418,6 +427,69 @@ void STDescManager::AddSTDescs(const std::vector<STDesc> &stds_vec) {
   }
   return;
 }
+
+////////////////////////EPVS
+void STDescManager::MatchConsecutiveFrames(const std::vector<STDesc>& prev_descs, const std::vector<STDesc>& curr_descs, std::vector<std::pair<STDesc, STDesc>>& matched_pairs) {
+    matched_pairs.clear(); // Asegúrate de que la lista de emparejados esté vacía al comenzar
+
+    // Umbral para determinar si dos descriptores deben considerarse una coincidencia
+    const double similarity_threshold = 1.0; // Esto debería ajustarse basado en tus necesidades específicas
+
+    for (const auto& prev : prev_descs) {
+        for (const auto& curr : curr_descs) {
+            double distance = (prev.center_ - curr.center_).norm(); // Calcula la distancia entre los centros
+
+            // Comparación simple basada en la distancia Euclidiana
+            if (distance < similarity_threshold) {
+                matched_pairs.push_back(std::make_pair(prev, curr));
+            }
+        }
+    }    
+}
+
+// void STDescManager::publish_matched_pairs(const std::vector<std::pair<STDesc, STDesc>>& matched_pairs, const ros::Publisher& pub) {
+//     visualization_msgs::MarkerArray marker_array;
+//     int id = 0;
+
+//     for (const auto& pair : matched_pairs) {
+//         visualization_msgs::Marker marker;
+//         marker.header.frame_id = "velodyne"; // Asumiendo 'velodyne' como frame de referencia
+//         marker.header.stamp = ros::Time::now();
+//         marker.ns = "matched_pairs";
+//         marker.id = id++;
+//         marker.type = visualization_msgs::Marker::LINE_LIST;
+//         marker.action = visualization_msgs::Marker::ADD;
+//         marker.scale.x = 0.05; // Ajustar el grosor de la línea
+//         marker.color.r = 1.0;  // Rojo
+//         marker.color.g = 0.0;  // Verde
+//         marker.color.b = 0.0;  // Azul
+//         marker.color.a = 1.0;  // Alpha
+
+//         // Definir los puntos extremos de la línea basados en los centros de los STDesc
+//         geometry_msgs::Point p1, p2;
+//         p1.x = pair.first.center_[0];
+//         p1.y = pair.first.center_[1];
+//         p1.z = pair.first.center_[2];
+//         p2.x = pair.second.center_[0];
+//         p2.y = pair.second.center_[1];
+//         p2.z = pair.second.center_[2];
+
+//         marker.points.push_back(p1);
+//         marker.points.push_back(p2);
+
+//         marker_array.markers.push_back(marker);
+//     }
+
+//     // Publicar el array de marcadores
+//     pub.publish(marker_array);
+
+//     // Limpiar los marcadores después de publicar
+//     for (auto& marker : marker_array.markers) {
+//         marker.action = visualization_msgs::Marker::DELETE;
+//     }
+//     pub.publish(marker_array);
+// }
+///////////////////////////////
 
 void STDescManager::init_voxel_map(
     const pcl::PointCloud<pcl::PointXYZI>::Ptr &input_cloud,
@@ -1111,6 +1183,8 @@ void STDescManager::candidate_selector(
     }
   }
 
+  std::cout <<"Voxel_round: " << voxel_round.size() <<std::endl;
+  
   std::vector<bool> useful_match(stds_vec.size());
   std::vector<std::vector<size_t>> useful_match_index(stds_vec.size());
   std::vector<std::vector<STDesc_LOC>> useful_match_position(stds_vec.size());
@@ -1133,6 +1207,9 @@ void STDescManager::candidate_selector(
     STDesc_LOC best_position;
     double dis_threshold =
         src_std.side_length_.norm() * config_setting_.rough_dis_threshold_;
+
+    
+    
     for (auto voxel_inc : voxel_round) {
       position.x = (int)(src_std.side_length_[0] + voxel_inc[0]);
       position.y = (int)(src_std.side_length_[1] + voxel_inc[1]);
@@ -1141,14 +1218,23 @@ void STDescManager::candidate_selector(
                                    (double)position.y + 0.5,
                                    (double)position.z + 0.5);
       if ((src_std.side_length_ - voxel_center).norm() < 1.5) {
-        auto iter = data_base_.find(position);
+
+
+        auto iter = data_base_.find(position);    
         if (iter != data_base_.end()) {
+          
+
           for (size_t j = 0; j < data_base_[position].size(); j++) {
+
+            // std::cout << "data_base_[position].size() " << data_base_[position].size() << std::endl; 
+            // std::cout << "(src_std.frame_id_ - data_base_[position][j].frame_id_) " << (src_std.frame_id_ - data_base_[position][j].frame_id_) << std::endl; 
+
             if ((src_std.frame_id_ - data_base_[position][j].frame_id_) >
                 config_setting_.skip_near_num_) {
               double dis =
                   (src_std.side_length_ - data_base_[position][j].side_length_)
                       .norm();
+             
               // rough filter with side lengths
               if (dis < dis_threshold) {
                 dis_match_cnt++;
@@ -1177,8 +1263,10 @@ void STDescManager::candidate_selector(
       }
     }
   }
-  // std::cout << "dis match num:" << dis_match_cnt
-  //           << ", final match num:" << final_match_cnt << std::endl;
+  std::cout << "dis match num:" << dis_match_cnt
+            << ", final match num:" << final_match_cnt << std::endl;
+
+  
 
   // record match index
   std::vector<Eigen::Vector2i, Eigen::aligned_allocator<Eigen::Vector2i>>
