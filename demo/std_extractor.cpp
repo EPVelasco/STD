@@ -115,8 +115,8 @@ int main(int argc, char **argv) {
   ros::Publisher pub_prev_points = nh.advertise<sensor_msgs::PointCloud2>("std_prev_points", 10);
   ros::Publisher pubSTD =   nh.advertise<visualization_msgs::MarkerArray>("pair_std", 10);
 
-  ros::Publisher marker_pub = nh.advertise<visualization_msgs::MarkerArray>("Axes_STD", 10);
-
+  ros::Publisher marker_pub_prev = nh.advertise<visualization_msgs::MarkerArray>("Axes_prev_STD", 10);
+  ros::Publisher marker_pub_curr = nh.advertise<visualization_msgs::MarkerArray>("Axes_curr_STD", 10);
 
   ros::Subscriber subLaserCloud = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_points", 100, laserCloudHandler);
 
@@ -157,7 +157,7 @@ int main(int argc, char **argv) {
         //////////////////////////////////////////////
 
 
-        // // step2. Searching pairs
+        // step2. Searching pairs
         // std::pair<int, double> search_result(-1, 0);
         // std::pair<Eigen::Vector3d, Eigen::Matrix3d> loop_transform;
         // loop_transform.first << 0, 0, 0;
@@ -171,16 +171,16 @@ int main(int argc, char **argv) {
         // // step3. Add descriptors to the database
         // std_manager->AddSTDescs(std_pair);
 
+
+        ////// OK
+
         std::vector<std::pair<STDesc, STDesc>> matched_pairs;
         std_manager->MatchConsecutiveFrames(stds_prev, stds_curr, matched_pairs);
         ROS_INFO("Pairs %lu ST", matched_pairs.size());
         publish_std_pairs(matched_pairs, pubSTD);
 
-        std_manager->publishAxes(marker_pub, stds_prev, msg_point->header);
-
-        //std_manager->publish_matched_pairs(matched_pairs, pubSTD);
-
-
+        std_manager->publishAxes(marker_pub_prev, stds_prev, msg_point->header);
+        std_manager->publishAxes(marker_pub_curr, stds_curr, msg_point->header);
 
 
 
