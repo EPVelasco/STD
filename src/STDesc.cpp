@@ -489,6 +489,61 @@ void STDescManager::MatchConsecutiveFrames(const std::vector<STDesc>& prev_descs
 //     }
 //     pub.publish(marker_array);
 // }
+
+
+void STDescManager::publishAxes(const ros::Publisher& marker_pub, const std::vector<STDesc>& descs, const std_msgs::Header& header) {
+    visualization_msgs::MarkerArray marker_array;
+    int id = 0;
+    float shaft_diameter = 0.05;  // Diámetro del eje
+
+    // Iterar sobre cada descriptor en el vector
+    for (const auto& desc : descs) {
+        Eigen::Matrix3d axes = desc.calculateReferenceFrame();
+
+        // Crear un marker para cada eje de cada descriptor
+        for (int i = 0; i < 3; ++i) {
+            visualization_msgs::Marker marker;
+            marker.header = header;
+            marker.ns = "std_axes";
+            marker.id = id++;
+            marker.type = visualization_msgs::Marker::ARROW;
+            marker.action = visualization_msgs::Marker::ADD;
+            marker.scale.x = shaft_diameter;
+            marker.scale.y = shaft_diameter * 2.0;
+            marker.scale.z = 0.0;  // no se usa para flechas
+
+            // Colores diferenciados para cada eje
+            if (i == 0) {
+                marker.color.r = 1.0; marker.color.g = 0.0; marker.color.b = 0.0;  // X rojo
+            } else if (i == 1) {
+                marker.color.r = 0.0; marker.color.g = 1.0; marker.color.b = 0.0;  // Y verde
+            } else {
+                marker.color.r = 0.0; marker.color.g = 0.0; marker.color.b = 1.0;  // Z azul
+            }
+            marker.color.a = 1.0;
+
+            // Definir los puntos extremos de la línea basados en los centros de los STDesc
+            geometry_msgs::Point start, end;
+            start.x = desc.center_.x();
+            start.y = desc.center_.y();
+            start.z = desc.center_.z();
+            end.x = start.x + axes(0, i);
+            end.y = start.y + axes(1, i);
+            end.z = start.z + axes(2, i);
+
+            marker.points.push_back(start);
+            marker.points.push_back(end);
+
+            marker_array.markers.push_back(marker);
+        }
+    }
+
+    // Publicar el array de marcadores
+    marker_pub.publish(marker_array);
+}
+
+
+
 ///////////////////////////////
 
 void STDescManager::init_voxel_map(

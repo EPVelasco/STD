@@ -23,10 +23,11 @@ std::mutex laser_mtx;
 bool init_std = true;
 
 std::queue<sensor_msgs::PointCloud2::ConstPtr> laser_buffer;
+sensor_msgs::PointCloud2::ConstPtr msg_point;
 
 void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr &msg) {
   std::unique_lock<std::mutex> lock(laser_mtx);
-
+  msg_point = msg;
   laser_buffer.push(msg);
 }
 
@@ -107,12 +108,15 @@ int main(int argc, char **argv) {
   ConfigSetting config_setting;
   read_parameters(nh, config_setting);
 
-  ros::Publisher pubkeycurr = nh.advertise<visualization_msgs::MarkerArray>("/std_curr", 10);
-  ros::Publisher pubkeyprev = nh.advertise<visualization_msgs::MarkerArray>("/std_prev", 10);
+  ros::Publisher pubkeycurr = nh.advertise<visualization_msgs::MarkerArray>("std_curr", 10);
+  ros::Publisher pubkeyprev = nh.advertise<visualization_msgs::MarkerArray>("std_prev", 10);
   
-  ros::Publisher pub_curr_points = nh.advertise<sensor_msgs::PointCloud2>("/std_curr_points", 10);
-  ros::Publisher pub_prev_points = nh.advertise<sensor_msgs::PointCloud2>("/std_prev_points", 10);
+  ros::Publisher pub_curr_points = nh.advertise<sensor_msgs::PointCloud2>("std_curr_points", 10);
+  ros::Publisher pub_prev_points = nh.advertise<sensor_msgs::PointCloud2>("std_prev_points", 10);
   ros::Publisher pubSTD =   nh.advertise<visualization_msgs::MarkerArray>("pair_std", 10);
+
+  ros::Publisher marker_pub = nh.advertise<visualization_msgs::MarkerArray>("Axes_STD", 10);
+
 
   ros::Subscriber subLaserCloud = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_points", 100, laserCloudHandler);
 
@@ -171,6 +175,9 @@ int main(int argc, char **argv) {
         std_manager->MatchConsecutiveFrames(stds_prev, stds_curr, matched_pairs);
         ROS_INFO("Pairs %lu ST", matched_pairs.size());
         publish_std_pairs(matched_pairs, pubSTD);
+
+        std_manager->publishAxes(marker_pub, stds_prev, msg_point->header);
+
         //std_manager->publish_matched_pairs(matched_pairs, pubSTD);
 
 

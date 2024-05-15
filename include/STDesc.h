@@ -17,6 +17,7 @@
 #include <unordered_map>
 #include <visualization_msgs/Marker.h>
 #include <visualization_msgs/MarkerArray.h>
+#include <std_msgs/Header.h>
 
 #define HASH_P 116101
 #define MAX_N 10000000000
@@ -73,6 +74,28 @@ typedef struct STDesc {
   Eigen::Vector3d vertex_A_;
   Eigen::Vector3d vertex_B_;
   Eigen::Vector3d vertex_C_;
+
+
+  Eigen::Matrix3d calculateReferenceFrame() const {
+    // Eje X: Normalizado P3 - centroid
+    Eigen::Vector3d x_axis = (vertex_C_ - center_).normalized();
+
+    // Eje Y: Normalizado P2 - P1
+    Eigen::Vector3d y_axis = (vertex_B_ - vertex_A_).normalized();
+
+    // Eje Z: Producto cruzado de X y Y
+    Eigen::Vector3d z_axis = x_axis.cross(y_axis).normalized();
+
+    // Corregir el axis Y para asegurar que sea ortogonal
+    y_axis = z_axis.cross(x_axis).normalized();
+
+    Eigen::Matrix3d axes;
+    axes.col(0) = x_axis;
+    axes.col(1) = y_axis;
+    axes.col(2) = z_axis;
+
+    return axes;
+  }
 
   // some other inform attached to each vertex,e.g., intensity
   Eigen::Vector3d vertex_attached_;
@@ -312,6 +335,7 @@ public:
 
   void MatchConsecutiveFrames(const std::vector<STDesc>& prev_descs, const std::vector<STDesc>& curr_descs, std::vector<std::pair<STDesc, STDesc>>& matched_pairs);
   void publish_matched_pairs(const std::vector<std::pair<STDesc, STDesc>>& matched_pairs, const ros::Publisher& pub);
+  void publishAxes(const ros::Publisher& marker_pub, const std::vector<STDesc>&, const std_msgs::Header& header);
 
 private:
   /*Following are sub-processing functions*/
