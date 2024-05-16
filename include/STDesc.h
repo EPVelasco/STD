@@ -19,6 +19,8 @@
 #include <visualization_msgs/MarkerArray.h>
 #include <std_msgs/Header.h>
 
+#include <nanoflann.hpp> // nanoflann library
+
 #define HASH_P 116101
 #define MAX_N 10000000000
 #define MAX_FRAME_N 20000
@@ -97,9 +99,39 @@ typedef struct STDesc {
     return axes;
   }
 
+  // Convert the descriptor to a flat vector (for nanoflann example)
+    std::vector<double> toVector() const {
+        std::vector<double> vec(15);
+        vec[0] = side_length_[0]; vec[1] = side_length_[1]; vec[2] = side_length_[2];
+        vec[3] = angle_[0]; vec[4] = angle_[1]; vec[5] = angle_[2];
+        vec[6] = center_[0]; vec[7] = center_[1]; vec[8] = center_[2];
+        vec[9] = vertex_A_[0]; vec[10] = vertex_A_[1]; vec[11] = vertex_A_[2];
+        vec[12] = vertex_B_[0]; vec[13] = vertex_B_[1]; vec[14] = vertex_B_[2];
+        vec[15] = vertex_C_[0]; vec[16] = vertex_C_[1]; vec[17] = vertex_C_[2];
+        return vec;
+    }
+
   // some other inform attached to each vertex,e.g., intensity
   Eigen::Vector3d vertex_attached_;
 } STDesc;
+
+/////////////////////// Descriptor STD BBDD to nanoflann
+struct DescriptorCloud {
+    std::vector<STDesc> descriptors;
+
+    // Returns the number of data points
+    inline size_t kdtree_get_point_count() const { return descriptors.size(); }
+
+    // Returns the dim'th component of the idx'th point in the class
+    inline double kdtree_get_pt(const size_t idx, const size_t dim) const {
+        std::vector<double> vec = descriptors[idx].toVector();
+        return vec[dim];
+    }
+
+    // Optional bounding-box computation: return false to default to a standard bbox computation loop
+    template <class BBOX>
+    bool kdtree_get_bbox(BBOX&) const { return false; }
+};
 
 // plane structure for corner point extraction
 typedef struct Plane {

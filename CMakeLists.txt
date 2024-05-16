@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.0.2)
 project(std_detector)
 
+
+# Find nanoflannConfig.cmake:
+find_package(nanoflann)
+
 ## Compile as C++14
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -91,10 +95,11 @@ target_link_libraries(online_demo
         ${CERES_LIBRARIES}
         gtsam)
 
-add_executable(std_example demo/std_extractor.cpp src/STDesc.cpp )
+add_executable(std_example demo/std_extractor.cpp src/STDesc.cpp src/KDTree_STD.cpp)
         target_link_libraries(std_example
                 ${catkin_LIBRARIES}
                 ${PCL_LIBRARIES}
                 ${OpenCV_LIBS}
                 ${CERES_LIBRARIES}
-                gtsam)
+                #gtsam
+                nanoflann::nanoflann)
