@@ -1302,8 +1302,8 @@ void STDescManager::candidate_selector(
                     (src_std.vertex_attached_ +
                      data_base_[position][j].vertex_attached_)
                         .norm();
-                std::cout << "vertex diff:" << vertex_attach_diff <<
-                std::endl;
+                // std::cout << "vertex diff:" << vertex_attach_diff <<
+                // std::endl;
 
                 if (vertex_attach_diff <
                     config_setting_.vertex_diff_threshold_) {

@@ -200,14 +200,20 @@ int main(int argc, char **argv) {
   while (ros::ok()) {
     ros::spinOnce();
 
+    PointCloud::Ptr current_cloud_world(new PointCloud);
     PointCloud::Ptr current_cloud(new PointCloud);
-     Eigen::Affine3d pose; // odometria 
+    Eigen::Affine3d pose; // odometria 
 
-    if (syncPackages(current_cloud, pose)) {
+    //if (readPC(current_cloud)) {
+      if (syncPackages(current_cloud, pose)) {
 
-      if (readPC(current_cloud)) {
-          down_sampling_voxel(*current_cloud, 0.1);
-      
+
+          // Transformando la nube de puntos segun la pose obtenida
+          pcl::transformPointCloud(*current_cloud, *current_cloud_world, pose);
+          down_sampling_voxel(*current_cloud_world, 0.2);
+          // down sample body cloud
+          down_sampling_voxel(*current_cloud, 0.5);
+                
           // step1. Descriptor Extraction
 
           auto start = std::chrono::high_resolution_clock::now();
@@ -311,7 +317,7 @@ int main(int argc, char **argv) {
 
           stds_prev = stds_curr;
       }
-    }
+   // }
   }
 
   return 0;

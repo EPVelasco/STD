@@ -20,9 +20,9 @@ non_max_suppression_radius: 2
 std_side_resolution: 0.2
 
 # candidate search
-skip_near_num: 20
-candidate_num: 20
-sub_frame_num: 10
+skip_near_num: 10
+candidate_num: 10
+sub_frame_num: 5
 vertex_diff_threshold: 0.5
 rough_dis_threshold: 0.01
 normal_threshold: 0.2
