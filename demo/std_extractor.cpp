@@ -207,7 +207,7 @@ int main(int argc, char **argv) {
   std::vector<STDesc> stds_curr;
   std::vector<STDesc> stds_prev;
 
-  STDescCloud cloud;
+  STDescCloud stdmap;
 
   while (ros::ok()) {
     ros::spinOnce();
@@ -260,7 +260,7 @@ int main(int argc, char **argv) {
             ROS_INFO("Inicial...");
           }
           else{
-            //cloud.descriptors.clear();
+            //stdmap.descriptors.clear();
                         /////////////////////nanoflann
                         std::cout<<"NanoFlann **************"<<std::endl;
             if (!stds_curr.empty()) {            
@@ -268,10 +268,10 @@ int main(int argc, char **argv) {
                   
                   std::cout<<"Se añadieron:"<<std::endl;
                   printSTDesc(desc);
-                  cloud.descriptors.push_back(desc);
+                  stdmap.descriptors.push_back(desc);
               }
               // Construir el KD-Tree
-              STDescKDTree index(18, cloud, nanoflann::KDTreeSingleIndexAdaptorParams(10));
+              STDescKDTree index(18, stdmap, nanoflann::KDTreeSingleIndexAdaptorParams(10));
               index.buildIndex();
 
               // //// consultando stds_prev en el mapa
@@ -286,7 +286,7 @@ int main(int argc, char **argv) {
                           // STDesc query = desc;
 
                           // Buscar el descriptor más cercano
-                          STDesc closest = findClosestDescriptor(desc, index, cloud);
+                          STDesc closest = findClosestDescriptor(desc, index, stdmap);
                           std::cout << "Descriptor más cercano encontrado:\n";
                           printSTDesc(closest);
                       }

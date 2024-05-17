@@ -2,7 +2,6 @@
 
 STDesc findClosestDescriptor(const STDesc& query, STDescKDTree& index, STDescCloud& cloud) {
 
-    std::cout<<"KDTREE.h"<<std::endl;
     std::vector<double> queryVec = query.toVector();
 
     size_t ret_index;
