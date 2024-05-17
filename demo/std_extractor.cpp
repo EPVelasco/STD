@@ -172,6 +172,16 @@ void convertToPointCloud(const std::vector<STDesc>& stds, pcl::PointCloud<pcl::P
     }
 }
 
+void printSTDesc(const STDesc& desc) {
+    std::cout << "Side Lengths: " << desc.side_length_.transpose() << std::endl;
+    std::cout << "Angles: " << desc.angle_.transpose() << std::endl;
+    std::cout << "Center: " << desc.center_.transpose() << std::endl;
+    std::cout << "Vertex A: " << desc.vertex_A_.transpose() << std::endl;
+    std::cout << "Vertex B: " << desc.vertex_B_.transpose() << std::endl;
+    std::cout << "Vertex C: " << desc.vertex_C_.transpose() << std::endl;
+    std::cout << "Frame ID: " << desc.frame_id_ << std::endl;
+}
+
 int main(int argc, char **argv) {
   ros::init(argc, argv, "online_demo");
   ros::NodeHandle nh;
@@ -197,6 +207,8 @@ int main(int argc, char **argv) {
   std::vector<STDesc> stds_curr;
   std::vector<STDesc> stds_prev;
 
+  STDescCloud cloud;
+
   while (ros::ok()) {
     ros::spinOnce();
 
@@ -207,8 +219,29 @@ int main(int argc, char **argv) {
     //if (readPC(current_cloud)) {
       if (syncPackages(current_cloud, pose)) {
 
-
           // Transformando la nube de puntos segun la pose obtenida
+          // Extraer la matriz de rotación
+          // Eigen::Matrix3d rotation_matrix = pose.rotation();
+          
+          // // Convertir la matriz de rotación a un cuaternión
+          // Eigen::Quaterniond quaternion(rotation_matrix);
+          
+          // // Extraer la traslación
+          // Eigen::Vector3d translation = pose.translation();
+
+          // // Imprimir la traslación
+          // std::cout << "Translation vector:" << std::endl;
+          // std::cout << translation << std::endl;
+
+          // // Imprimir el cuaternión
+          // std::cout << "Quaternion:" << std::endl;
+          // std::cout << "x: " << quaternion.x() << std::endl;
+          // std::cout << "y: " << quaternion.y() << std::endl;
+          // std::cout << "z: " << quaternion.z() << std::endl;
+          // std::cout << "w: " << quaternion.w() << std::endl;
+
+          ////////////////////////////////////////////////////
+
           pcl::transformPointCloud(*current_cloud, *current_cloud_world, pose);
           down_sampling_voxel(*current_cloud_world, 0.2);
           // down sample body cloud
@@ -217,7 +250,7 @@ int main(int argc, char **argv) {
           // step1. Descriptor Extraction
 
           auto start = std::chrono::high_resolution_clock::now();
-          std_manager->GenerateSTDescs(current_cloud, stds_curr);
+          std_manager->GenerateSTDescs(current_cloud_world, stds_curr);
           auto end = std::chrono::high_resolution_clock::now();
           std::chrono::duration<double> elapsed = end - start;
 
@@ -226,15 +259,53 @@ int main(int argc, char **argv) {
             stds_prev = stds_curr;
             ROS_INFO("Inicial...");
           }
+          else{
+            //cloud.descriptors.clear();
+                        /////////////////////nanoflann
+                        std::cout<<"NanoFlann **************"<<std::endl;
+            if (!stds_curr.empty()) {            
+              for (const auto& desc : stds_curr) {
+                  
+                  std::cout<<"Se añadieron:"<<std::endl;
+                  printSTDesc(desc);
+                  cloud.descriptors.push_back(desc);
+              }
+              // Construir el KD-Tree
+              STDescKDTree index(18, cloud, nanoflann::KDTreeSingleIndexAdaptorParams(10));
+              index.buildIndex();
+
+              // //// consultando stds_prev en el mapa
+
+              if (!stds_prev.empty()) {
+                      // Iterar sobre todos los elementos de stds_prev
+                      for (const auto& desc : stds_prev) {
+                          std::cout<<"Buscando ......."<<std::endl;
+                          printSTDesc(desc);                   
+
+                          // // Usar cada elemento de stds_prev en query
+                          // STDesc query = desc;
+
+                          // Buscar el descriptor más cercano
+                          STDesc closest = findClosestDescriptor(desc, index, cloud);
+                          std::cout << "Descriptor más cercano encontrado:\n";
+                          printSTDesc(closest);
+                      }
+                  } else {
+                      std::cerr << "Error: stds_prev está vacío." << std::endl;
+                  }
+            }else{
+            std::cerr << "Error: std_curr está vacío." << std::endl;
+            }
+          }
 
           ROS_INFO("Extracted %lu ST", stds_curr.size());
           ROS_INFO("Extracted %lu ST descriptors in %f seconds", stds_prev.size(), elapsed.count());
 
 
           ////// Llenando el std_pair con los stds prev y current
-          std::vector<STDesc> std_pair;
-          std_pair.insert(std_pair.end(), stds_prev.begin(), stds_prev.end());
-          std_pair.insert(std_pair.end(), stds_curr.begin(), stds_curr.end());
+          // std::vector<STDesc> std_pair;
+          // std_pair.insert(std_pair.end(), stds_prev.begin(), stds_prev.end());
+          // std_pair.insert(std_pair.end(), stds_curr.begin(), stds_curr.end());
           
           //////////////////////////////////////////////
 
@@ -254,15 +325,20 @@ int main(int argc, char **argv) {
           // std_manager->AddSTDescs(std_pair);
 
 
-          ////// OK
+          ////// matching anterior
 
-          std::vector<std::pair<STDesc, STDesc>> matched_pairs;
-          std_manager->MatchConsecutiveFrames(stds_prev, stds_curr, matched_pairs);
-          ROS_INFO("Pairs %lu ST", matched_pairs.size());
-          publish_std_pairs(matched_pairs, pubSTD);
+          // std::vector<std::pair<STDesc, STDesc>> matched_pairs;
+          // std_manager->MatchConsecutiveFrames(stds_prev, stds_curr, matched_pairs);
+          // ROS_INFO("Pairs %lu ST", matched_pairs.size());
+          // publish_std_pairs(matched_pairs, pubSTD);
+
 
           std_manager->publishAxes(marker_pub_prev, stds_prev, msg_point->header);
           std_manager->publishAxes(marker_pub_curr, stds_curr, msg_point->header);
+
+
+
+          ///////////////////////////////
 
 
 
