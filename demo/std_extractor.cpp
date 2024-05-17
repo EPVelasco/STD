@@ -183,7 +183,7 @@ void printSTDesc(const STDesc& desc) {
 }
 
 int main(int argc, char **argv) {
-  ros::init(argc, argv, "online_demo");
+  ros::init(argc, argv, "STD_descriptor");
   ros::NodeHandle nh;
 
   ConfigSetting config_setting;
@@ -207,8 +207,8 @@ int main(int argc, char **argv) {
   std::vector<STDesc> stds_curr;
   std::vector<STDesc> stds_prev;
 
-  STDescCloud stdmap;
-
+  
+  using matrix_t = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic>;
   while (ros::ok()) {
     ros::spinOnce();
 
@@ -250,51 +250,70 @@ int main(int argc, char **argv) {
           // step1. Descriptor Extraction
 
           auto start = std::chrono::high_resolution_clock::now();
-          std_manager->GenerateSTDescs(current_cloud_world, stds_curr);
+          std_manager->GenerateSTDescs(current_cloud, stds_curr);
           auto end = std::chrono::high_resolution_clock::now();
           std::chrono::duration<double> elapsed = end - start;
 
           if(init_std){
             init_std = false;
             stds_prev = stds_curr;
-            ROS_INFO("Inicial...");
+            ROS_INFO("++++++++++ Iniciando Extraccion de STD ++++++++");
           }
           else{
-            //stdmap.descriptors.clear();
-                        /////////////////////nanoflann
-                        std::cout<<"NanoFlann **************"<<std::endl;
-            if (!stds_curr.empty()) {            
-              for (const auto& desc : stds_curr) {
-                  
-                  std::cout<<"Se añadieron:"<<std::endl;
-                  printSTDesc(desc);
-                  stdmap.descriptors.push_back(desc);
-              }
-              // Construir el KD-Tree
-              STDescKDTree index(18, stdmap, nanoflann::KDTreeSingleIndexAdaptorParams(10));
-              index.buildIndex();
+            matrix_t mat(stds_curr.size(), 15); // Asumiendo 15 dimensiones para STDesc
+            for (size_t i = 0; i < stds_curr.size(); ++i) {
+                mat.row(i) << stds_curr[i].side_length_.cast<float>(),
+                              stds_curr[i].angle_.cast<float>(),
+                              stds_curr[i].center_.cast<float>(),
+                              stds_curr[i].vertex_A_.cast<float>(),
+                              stds_curr[i].vertex_B_.cast<float>(),
+                              stds_curr[i].vertex_C_.cast<float>();
+            }
 
-              // //// consultando stds_prev en el mapa
+            // Construir y reiniciar el KD-Tree en cada iteración
+            nanoflann::KDTreeEigenMatrixAdaptor<matrix_t> index(15, std::cref(mat), 10 /* max leaf */);
+            index.index_->buildIndex();
 
-              if (!stds_prev.empty()) {
-                      // Iterar sobre todos los elementos de stds_prev
-                      for (const auto& desc : stds_prev) {
-                          std::cout<<"Buscando ......."<<std::endl;
-                          printSTDesc(desc);                   
+            if (!stds_prev.empty()) {
+                for (const auto& desc : stds_curr) {
+                    std::cout<<"Buscando---------------"<<std::endl;
+                    printSTDesc(desc);               
 
-                          // // Usar cada elemento de stds_prev en query
-                          // STDesc query = desc;
+                    // Usar el primer elemento de stds_prev como query
+                    std::vector<float> query(15);
 
-                          // Buscar el descriptor más cercano
-                          STDesc closest = findClosestDescriptor(desc, index, stdmap);
-                          std::cout << "Descriptor más cercano encontrado:\n";
-                          printSTDesc(closest);
-                      }
-                  } else {
-                      std::cerr << "Error: stds_prev está vacío." << std::endl;
-                  }
-            }else{
-            std::cerr << "Error: std_curr está vacío." << std::endl;
+                    Eigen::Vector3f side_length = desc.side_length_.cast<float>();
+                    Eigen::Vector3f angle = desc.angle_.cast<float>();
+                    Eigen::Vector3f center = desc.center_.cast<float>();
+                    Eigen::Vector3f vertex_A = desc.vertex_A_.cast<float>();
+                    Eigen::Vector3f vertex_B = desc.vertex_B_.cast<float>();
+                    Eigen::Vector3f vertex_C = desc.vertex_C_.cast<float>();
+
+                    query.insert(query.end(), side_length.data(), side_length.data() + 3);
+                    query.insert(query.end(), angle.data(), angle.data() + 3);
+                    query.insert(query.end(), center.data(), center.data() + 3);
+                    query.insert(query.end(), vertex_A.data(), vertex_A.data() + 3);
+                    query.insert(query.end(), vertex_B.data(), vertex_B.data() + 3);
+                    query.insert(query.end(), vertex_C.data(), vertex_C.data() + 3);
+
+                    // Buscar el descriptor más cercano
+                    const size_t num_results = 1;
+                    std::vector<size_t> ret_indexes(num_results);
+                    std::vector<float> out_dists_sqr(num_results);
+
+                    nanoflann::KNNResultSet<float> resultSet(num_results);
+                    resultSet.init(&ret_indexes[0], &out_dists_sqr[0]);
+                    index.index_->findNeighbors(resultSet, query.data());
+
+                    std::cout << "knnSearch(nn=" << num_results << "): \n";
+                    for (size_t i = 0; i < resultSet.size(); i++)
+                        std::cout << "ret_index[" << i << "]=" << ret_indexes[i]
+                                  << " out_dist_sqr=" << out_dists_sqr[i] << std::endl;
+
+                    STDesc closest = stds_curr[ret_indexes[0]];
+                    std::cout << "Descriptor más cercano encontrado:\n";
+                    printSTDesc(closest);
+                 }
             }
           }
 

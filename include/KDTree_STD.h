@@ -16,6 +16,7 @@ struct STDescCloud {
 
     template <class BBOX>
     bool kdtree_get_bbox(BBOX&) const { return false; }
+
 };
 
 typedef nanoflann::KDTreeSingleIndexAdaptor<
