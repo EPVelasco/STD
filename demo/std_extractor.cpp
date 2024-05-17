@@ -182,6 +182,38 @@ void printSTDesc(const STDesc& desc) {
     std::cout << "Frame ID: " << desc.frame_id_ << std::endl;
 }
 
+template <typename T>
+void printVector(const std::vector<T>& vec) {
+    std::cout << "[";
+    for (size_t i = 0; i < vec.size(); ++i) {
+        std::cout << vec[i];
+        if (i != vec.size() - 1) {
+            std::cout << ", ";
+        }
+    }
+    std::cout << "]" << std::endl;
+}
+
+void fillMatrix(Eigen::MatrixXf& mat, const std::vector<STDesc>& stds_curr) {
+    for (size_t i = 0; i < stds_curr.size(); ++i) {
+        Eigen::Vector3f side_length = stds_curr[i].side_length_.cast<float>();
+        Eigen::Vector3f angle = stds_curr[i].angle_.cast<float>();
+        Eigen::Vector3f center = stds_curr[i].center_.cast<float>();
+        Eigen::Vector3f vertex_A = stds_curr[i].vertex_A_.cast<float>();
+        Eigen::Vector3f vertex_B = stds_curr[i].vertex_B_.cast<float>();
+        Eigen::Vector3f vertex_C = stds_curr[i].vertex_C_.cast<float>();
+
+        mat.block<1, 3>(i, 0) = side_length.transpose();
+        mat.block<1, 3>(i, 3) = angle.transpose();
+        mat.block<1, 3>(i, 6) = center.transpose();
+        mat.block<1, 3>(i, 9) = vertex_A.transpose();
+        mat.block<1, 3>(i, 12) = vertex_B.transpose();
+        mat.block<1, 3>(i, 15) = vertex_C.transpose();
+
+        //std::cout << "Mat fila " << i << " añadido: " << mat.row(i) << std::endl;
+    }
+}
+
 int main(int argc, char **argv) {
   ros::init(argc, argv, "STD_descriptor");
   ros::NodeHandle nh;
@@ -245,14 +277,13 @@ int main(int argc, char **argv) {
           pcl::transformPointCloud(*current_cloud, *current_cloud_world, pose);
           down_sampling_voxel(*current_cloud_world, 0.2);
           // down sample body cloud
-          down_sampling_voxel(*current_cloud, 0.5);
+          down_sampling_voxel(*current_cloud, 0.2);
                 
           // step1. Descriptor Extraction
 
           auto start = std::chrono::high_resolution_clock::now();
           std_manager->GenerateSTDescs(current_cloud, stds_curr);
-          auto end = std::chrono::high_resolution_clock::now();
-          std::chrono::duration<double> elapsed = end - start;
+
 
           if(init_std){
             init_std = false;
@@ -260,27 +291,32 @@ int main(int argc, char **argv) {
             ROS_INFO("++++++++++ Iniciando Extraccion de STD ++++++++");
           }
           else{
-            matrix_t mat(stds_curr.size(), 15); // Asumiendo 15 dimensiones para STDesc
-            for (size_t i = 0; i < stds_curr.size(); ++i) {
-                mat.row(i) << stds_curr[i].side_length_.cast<float>(),
-                              stds_curr[i].angle_.cast<float>(),
-                              stds_curr[i].center_.cast<float>(),
-                              stds_curr[i].vertex_A_.cast<float>(),
-                              stds_curr[i].vertex_B_.cast<float>(),
-                              stds_curr[i].vertex_C_.cast<float>();
-            }
+            matrix_t mat(stds_curr.size(), 18); // Asumiendo 15 dimensiones para STDesc
+            // for (size_t i = 0; i < stds_curr.size(); ++i) {
+            //     mat.row(i) << stds_curr[i].side_length_.cast<float>(),
+            //                   stds_curr[i].angle_.cast<float>(),
+            //                   stds_curr[i].center_.cast<float>(),
+            //                   stds_curr[i].vertex_A_.cast<float>(),
+            //                   stds_curr[i].vertex_B_.cast<float>(),
+            //                   stds_curr[i].vertex_C_.cast<float>();
+
+            //     std::cout<<"Mat añadido: "<< mat.row(i) <<std::endl;
+            // }
+
+            fillMatrix(mat,stds_curr);
+            std::cout<<"Se creo la matriz"<<std::endl;
 
             // Construir y reiniciar el KD-Tree en cada iteración
-            nanoflann::KDTreeEigenMatrixAdaptor<matrix_t> index(15, std::cref(mat), 10 /* max leaf */);
+            nanoflann::KDTreeEigenMatrixAdaptor<matrix_t> index(18, std::cref(mat), 10 /* max leaf */);
             index.index_->buildIndex();
 
             if (!stds_prev.empty()) {
-                for (const auto& desc : stds_curr) {
-                    std::cout<<"Buscando---------------"<<std::endl;
-                    printSTDesc(desc);               
+                for (const auto& desc : stds_prev) {
+                   // std::cout<<"Buscando---------------"<<std::endl;
+                  //  printSTDesc(desc);               
 
                     // Usar el primer elemento de stds_prev como query
-                    std::vector<float> query(15);
+                    std::vector<float> query;
 
                     Eigen::Vector3f side_length = desc.side_length_.cast<float>();
                     Eigen::Vector3f angle = desc.angle_.cast<float>();
@@ -296,8 +332,9 @@ int main(int argc, char **argv) {
                     query.insert(query.end(), vertex_B.data(), vertex_B.data() + 3);
                     query.insert(query.end(), vertex_C.data(), vertex_C.data() + 3);
 
+                  //  printVector(query);
                     // Buscar el descriptor más cercano
-                    const size_t num_results = 1;
+                    const size_t num_results = 3;
                     std::vector<size_t> ret_indexes(num_results);
                     std::vector<float> out_dists_sqr(num_results);
 
@@ -305,17 +342,24 @@ int main(int argc, char **argv) {
                     resultSet.init(&ret_indexes[0], &out_dists_sqr[0]);
                     index.index_->findNeighbors(resultSet, query.data());
 
-                    std::cout << "knnSearch(nn=" << num_results << "): \n";
-                    for (size_t i = 0; i < resultSet.size(); i++)
+                  //  std::cout << "knnSearch(nn=" << num_results << "): \n";
+                    for (size_t i = 0; i < resultSet.size(); i++){
                         std::cout << "ret_index[" << i << "]=" << ret_indexes[i]
                                   << " out_dist_sqr=" << out_dists_sqr[i] << std::endl;
 
-                    STDesc closest = stds_curr[ret_indexes[0]];
-                    std::cout << "Descriptor más cercano encontrado:\n";
-                    printSTDesc(closest);
+                      // std::cout<<"Resultado: "<<std::endl;
+                      // std::cout << mat.row(ret_indexes[i]) << std::endl;
+
+                      // STDesc closest = stds_curr[ret_indexes[i]];
+                      // std::cout << "Descriptor más cercano encontrado:\n";
+                      // printSTDesc(closest);
+                    }
                  }
             }
           }
+
+          auto end = std::chrono::high_resolution_clock::now();
+          std::chrono::duration<double> elapsed = end - start;
 
           ROS_INFO("Extracted %lu ST", stds_curr.size());
           ROS_INFO("Extracted %lu ST descriptors in %f seconds", stds_prev.size(), elapsed.count());
@@ -364,49 +408,49 @@ int main(int argc, char **argv) {
 
           /////////////////// Data visualization //////////////////////////////////////////////
         
-            ////// visualizacion de los keypoints current
-            visualization_msgs::MarkerArray marker_array_curr;
-            Eigen::Vector3f colorVector_curr(0.0f, 0.0f, 1.0f);  // azul
+            // ////// visualizacion de los keypoints current
+            // visualization_msgs::MarkerArray marker_array_curr;
+            // Eigen::Vector3f colorVector_curr(0.0f, 0.0f, 1.0f);  // azul
 
-            convertToMarkers(stds_curr, marker_array_curr,colorVector_curr ,0.5 );
-            pubkeycurr.publish(marker_array_curr);
-            visualization_msgs::Marker delete_marker_curr;
-            delete_marker_curr.action = visualization_msgs::Marker::DELETEALL;
-            marker_array_curr.markers.clear();  // Asegúrate de que el array de marcadores esté vacío
-            marker_array_curr.markers.push_back(delete_marker_curr);
-            pubkeycurr.publish(marker_array_curr);
-            //////////////////////////////////////////
+            // convertToMarkers(stds_curr, marker_array_curr,colorVector_curr ,0.5 );
+            // pubkeycurr.publish(marker_array_curr);
+            // visualization_msgs::Marker delete_marker_curr;
+            // delete_marker_curr.action = visualization_msgs::Marker::DELETEALL;
+            // marker_array_curr.markers.clear();  // Asegúrate de que el array de marcadores esté vacío
+            // marker_array_curr.markers.push_back(delete_marker_curr);
+            // pubkeycurr.publish(marker_array_curr);
+            // //////////////////////////////////////////
 
-            ////// publicacion de nube de puntos en los vertices de los stds
-            pcl::PointCloud<pcl::PointXYZ>::Ptr std_points(new pcl::PointCloud<pcl::PointXYZ>);
-            convertToPointCloud(stds_curr, std_points);
-            sensor_msgs::PointCloud2 output_curr;
-            pcl::toROSMsg(*std_points, output_curr);
-            output_curr.header.frame_id = "velodyne";
-            pub_curr_points.publish(output_curr);
-            //////////////////////////////////////////
+            // ////// publicacion de nube de puntos en los vertices de los stds
+            // pcl::PointCloud<pcl::PointXYZ>::Ptr std_points(new pcl::PointCloud<pcl::PointXYZ>);
+            // convertToPointCloud(stds_curr, std_points);
+            // sensor_msgs::PointCloud2 output_curr;
+            // pcl::toROSMsg(*std_points, output_curr);
+            // output_curr.header.frame_id = "velodyne";
+            // pub_curr_points.publish(output_curr);
+            // //////////////////////////////////////////
 
-            /////////////////////// Previous std
-            ////// visualizacion de los keypoints prev
-            visualization_msgs::MarkerArray marker_array_prev;
-            Eigen::Vector3f colorVector_prev(1.0f, 0.0f, 0.0f);  // azul
-            convertToMarkers(stds_prev, marker_array_prev,colorVector_prev ,0.5 );
-            pubkeyprev.publish(marker_array_prev);
-            visualization_msgs::Marker delete_marker_prev;
-            delete_marker_prev.action = visualization_msgs::Marker::DELETEALL;
-            marker_array_prev.markers.clear();  // Asegúrate de que el array de marcadores esté vacío
-            marker_array_prev.markers.push_back(delete_marker_prev);
-            pubkeyprev.publish(marker_array_prev);
-            //////////////////////////////////////////
+            // /////////////////////// Previous std
+            // ////// visualizacion de los keypoints prev
+            // visualization_msgs::MarkerArray marker_array_prev;
+            // Eigen::Vector3f colorVector_prev(1.0f, 0.0f, 0.0f);  // azul
+            // convertToMarkers(stds_prev, marker_array_prev,colorVector_prev ,0.5 );
+            // pubkeyprev.publish(marker_array_prev);
+            // visualization_msgs::Marker delete_marker_prev;
+            // delete_marker_prev.action = visualization_msgs::Marker::DELETEALL;
+            // marker_array_prev.markers.clear();  // Asegúrate de que el array de marcadores esté vacío
+            // marker_array_prev.markers.push_back(delete_marker_prev);
+            // pubkeyprev.publish(marker_array_prev);
+            // //////////////////////////////////////////
 
-            ////// publicacion de nube de puntos en los vertices de los stds
-            pcl::PointCloud<pcl::PointXYZ>::Ptr std_points_prev(new pcl::PointCloud<pcl::PointXYZ>);
-            convertToPointCloud(stds_prev, std_points_prev);
-            sensor_msgs::PointCloud2 output_prev;
-            pcl::toROSMsg(*std_points_prev, output_prev);
-            output_prev.header.frame_id = "velodyne";
-            pub_prev_points.publish(output_prev);
-            //////////////////////////////////////////
+            // ////// publicacion de nube de puntos en los vertices de los stds
+            // pcl::PointCloud<pcl::PointXYZ>::Ptr std_points_prev(new pcl::PointCloud<pcl::PointXYZ>);
+            // convertToPointCloud(stds_prev, std_points_prev);
+            // sensor_msgs::PointCloud2 output_prev;
+            // pcl::toROSMsg(*std_points_prev, output_prev);
+            // output_prev.header.frame_id = "velodyne";
+            // pub_prev_points.publish(output_prev);
+            // //////////////////////////////////////////
 
           //////////////////////////////////////////////////////////////////////////////////////////////////
 
