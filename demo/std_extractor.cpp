@@ -2,11 +2,14 @@
 #include <mutex>
 #include <queue>
 #include <thread>
+#include <vector>
+#include <iostream>
+#include <visualization_msgs/MarkerArray.h>
+#include <visualization_msgs/Marker.h>
 
 // PCL
 #include <pcl/common/transforms.h>
 #include <pcl/io/io.h>
-#include <pcl/io/pcd_io.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl_conversions/pcl_conversions.h>
@@ -25,6 +28,8 @@
 // Time
 #include <chrono>
 
+#include <random>
+
 typedef pcl::PointXYZI PointType;
 typedef pcl::PointCloud<PointType> PointCloud;
 
@@ -39,83 +44,81 @@ std::queue<nav_msgs::Odometry::ConstPtr> odom_buffer;
 sensor_msgs::PointCloud2::ConstPtr msg_point;
 
 void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr &msg) {
-  std::unique_lock<std::mutex> lock(laser_mtx);
-  msg_point = msg;
-  laser_buffer.push(msg);
+    std::unique_lock<std::mutex> lock(laser_mtx);
+    msg_point = msg;
+    laser_buffer.push(msg);
 }
 
 void OdomHandler(const nav_msgs::Odometry::ConstPtr &msg) {
-  std::unique_lock<std::mutex> lock(odom_mtx);
-
-  odom_buffer.push(msg);
+    std::unique_lock<std::mutex> lock(odom_mtx);
+    odom_buffer.push(msg);
 }
 
-
-//////////////////////////////// Sincronizacion de los datos:
+//////////////////////////////// Sincronización de los datos:
 bool syncPackages(PointCloud::Ptr &cloud, Eigen::Affine3d &pose) {
-  if (laser_buffer.empty() || odom_buffer.empty())
-    return false;
+    if (laser_buffer.empty() || odom_buffer.empty())
+        return false;
 
-  auto laser_msg = laser_buffer.front();
-  double laser_timestamp = laser_msg->header.stamp.toSec();
+    auto laser_msg = laser_buffer.front();
+    double laser_timestamp = laser_msg->header.stamp.toSec();
 
-  auto odom_msg = odom_buffer.front();
-  double odom_timestamp = odom_msg->header.stamp.toSec();
+    auto odom_msg = odom_buffer.front();
+    double odom_timestamp = odom_msg->header.stamp.toSec();
 
-  // check if timestamps are matched
-  if (abs(odom_timestamp - laser_timestamp) < 1e-3) {
-    pcl::fromROSMsg(*laser_msg, *cloud);
+    // check if timestamps are matched
+    if (abs(odom_timestamp - laser_timestamp) < 1e-3) {
+        pcl::fromROSMsg(*laser_msg, *cloud);
 
-    Eigen::Quaterniond r(
-        odom_msg->pose.pose.orientation.w, odom_msg->pose.pose.orientation.x,
-        odom_msg->pose.pose.orientation.y, odom_msg->pose.pose.orientation.z);
-    Eigen::Vector3d t(odom_msg->pose.pose.position.x,
-                      odom_msg->pose.pose.position.y,
-                      odom_msg->pose.pose.position.z);
+        Eigen::Quaterniond r(
+            odom_msg->pose.pose.orientation.w, odom_msg->pose.pose.orientation.x,
+            odom_msg->pose.pose.orientation.y, odom_msg->pose.pose.orientation.z);
+        Eigen::Vector3d t(odom_msg->pose.pose.position.x,
+                          odom_msg->pose.pose.position.y,
+                          odom_msg->pose.pose.position.z);
 
-    pose = Eigen::Affine3d::Identity();
-    pose.translate(t);
-    pose.rotate(r);
+        pose = Eigen::Affine3d::Identity();
+        pose.translate(t);
+        pose.rotate(r);
 
-    std::unique_lock<std::mutex> l_lock(laser_mtx);
-    std::unique_lock<std::mutex> o_lock(odom_mtx);
+        std::unique_lock<std::mutex> l_lock(laser_mtx);
+        std::unique_lock<std::mutex> o_lock(odom_mtx);
 
-    laser_buffer.pop();
-    odom_buffer.pop();
+        laser_buffer.pop();
+        odom_buffer.pop();
 
-  } else if (odom_timestamp < laser_timestamp) {
-    ROS_WARN("Current odometry is earlier than laser scan, discard one "
-             "odometry data.");
-    std::unique_lock<std::mutex> o_lock(odom_mtx);
-    odom_buffer.pop();
-    return false;
-  } else {
-    ROS_WARN(
-        "Current laser scan is earlier than odometry, discard one laser scan.");
-    std::unique_lock<std::mutex> l_lock(laser_mtx);
-    laser_buffer.pop();
-    return false;
-  }
+    } else if (odom_timestamp < laser_timestamp) {
+        ROS_WARN("Current odometry is earlier than laser scan, discard one "
+                 "odometry data.");
+        std::unique_lock<std::mutex> o_lock(odom_mtx);
+        odom_buffer.pop();
+        return false;
+    } else {
+        ROS_WARN(
+            "Current laser scan is earlier than odometry, discard one laser scan.");
+        std::unique_lock<std::mutex> l_lock(laser_mtx);
+        laser_buffer.pop();
+        return false;
+    }
 
-  return true;
+    return true;
 }
 
 ////////////////////////////////////////////////////////////////
 
 bool readPC(PointCloud::Ptr &cloud) {
-  if (laser_buffer.empty())
-    return false;
+    if (laser_buffer.empty())
+        return false;
 
-  auto laser_msg = laser_buffer.front();
-  double laser_timestamp = laser_msg->header.stamp.toSec();
-  pcl::fromROSMsg(*laser_msg, *cloud);
-  std::unique_lock<std::mutex> l_lock(laser_mtx);
-  laser_buffer.pop();
-  return true;
+    auto laser_msg = laser_buffer.front();
+    double laser_timestamp = laser_msg->header.stamp.toSec();
+    pcl::fromROSMsg(*laser_msg, *cloud);
+    std::unique_lock<std::mutex> l_lock(laser_mtx);
+    laser_buffer.pop();
+    return true;
 }
 
 void convertToMarkers(const std::vector<STDesc>& stds, visualization_msgs::MarkerArray& marker_array, const Eigen::Vector3f& color, float alpha = 1.0) {
-        int id = 0;
+    int id = 0;
 
     for (const auto& std : stds) {
         visualization_msgs::Marker marker;
@@ -194,231 +197,224 @@ void printVector(const std::vector<T>& vec) {
     std::cout << "]" << std::endl;
 }
 
-void fillMatrix(Eigen::MatrixXf& mat, const std::vector<STDesc>& stds_curr) {
-    for (size_t i = 0; i < stds_curr.size(); ++i) {
-        Eigen::Vector3f side_length = stds_curr[i].side_length_.cast<float>();
-        Eigen::Vector3f angle = stds_curr[i].angle_.cast<float>();
-        Eigen::Vector3f center = stds_curr[i].center_.cast<float>();
-        Eigen::Vector3f vertex_A = stds_curr[i].vertex_A_.cast<float>();
-        Eigen::Vector3f vertex_B = stds_curr[i].vertex_B_.cast<float>();
-        Eigen::Vector3f vertex_C = stds_curr[i].vertex_C_.cast<float>();
+void addDescriptorToMatrix(Eigen::MatrixXf& mat, const STDesc& desc, int row) {
+    Eigen::Vector3f side_length = desc.side_length_.cast<float>();
+    Eigen::Vector3f angle = desc.angle_.cast<float>();
+    Eigen::Vector3f center = desc.center_.cast<float>();
+    Eigen::Vector3f vertex_A = desc.vertex_A_.cast<float>();
+    Eigen::Vector3f vertex_B = desc.vertex_B_.cast<float>();
+    Eigen::Vector3f vertex_C = desc.vertex_C_.cast<float>();
 
-        mat.block<1, 3>(i, 0) = side_length.transpose();
-        mat.block<1, 3>(i, 3) = angle.transpose();
-        mat.block<1, 3>(i, 6) = center.transpose();
-        mat.block<1, 3>(i, 9) = vertex_A.transpose();
-        mat.block<1, 3>(i, 12) = vertex_B.transpose();
-        mat.block<1, 3>(i, 15) = vertex_C.transpose();
+    mat.block<1, 3>(row, 0) = side_length.transpose();
+    mat.block<1, 3>(row, 3) = angle.transpose();
+    mat.block<1, 3>(row, 6) = center.transpose();
+    mat.block<1, 3>(row, 9) = vertex_A.transpose();
+    mat.block<1, 3>(row, 12) = vertex_B.transpose();
+    mat.block<1, 3>(row, 15) = vertex_C.transpose();
+}
 
-        //std::cout << "Mat fila " << i << " añadido: " << mat.row(i) << std::endl;
+void updateMatrixAndKDTree(Eigen::MatrixXf& mat, std::unique_ptr<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>>& index, const std::vector<STDesc>& std_local_map) {
+    const int max_window_size = 10;
+
+    int num_desc = std_local_map.size();
+    mat.conservativeResize(num_desc, 18);
+
+    // Rellenar la matriz con los descriptores actuales
+    for (size_t i = 0; i < std_local_map.size(); ++i) {
+        addDescriptorToMatrix(mat, std_local_map[i], i);
     }
+
+    // Recrear el KD-Tree con la matriz actualizada
+    index = std::make_unique<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>>(18, std::cref(mat), 10 /* max leaf */);
+    index->index_->buildIndex();
+}
+
+// Función para generar colores aleatorios
+std::tuple<float, float, float> getRandomColor() {
+    static std::random_device rd;
+    static std::mt19937 gen(rd());
+    static std::uniform_real_distribution<> dis(0.0, 1.0);
+    return std::make_tuple(dis(gen), dis(gen), dis(gen));
+}
+
+void generateArrow(const STDesc& desc1, const STDesc& desc2, visualization_msgs::MarkerArray& marker_array, int& id, const std_msgs::Header& header) {
+    visualization_msgs::Marker arrow;
+    arrow.header = header;
+    arrow.ns = "std_matches";
+    arrow.id = id++;
+    arrow.type = visualization_msgs::Marker::ARROW;
+    arrow.action = visualization_msgs::Marker::ADD;
+    arrow.scale.x = 0.02;  // Grosor del cuerpo de la flecha
+    arrow.scale.y = 0.04;  // Grosor de la cabeza de la flecha
+    arrow.scale.z = 0.1;   // Longitud de la cabeza de la flecha
+    
+    // Generar color aleatorio
+    auto [r, g, b] = getRandomColor();
+    arrow.color.r = r;
+    arrow.color.g = g;
+    arrow.color.b = b;
+    arrow.color.a = 1.0;
+
+    // Punto de inicio (centro del descriptor 1)
+    geometry_msgs::Point start;
+    start.x = desc1.center_(0);
+    start.y = desc1.center_(1);
+    start.z = desc1.center_(2);
+
+    // Punto final (centro del descriptor 2)
+    geometry_msgs::Point end;
+    end.x = desc2.center_(0);
+    end.y = desc2.center_(1);
+    end.z = desc2.center_(2);
+
+    arrow.points.push_back(start);
+    arrow.points.push_back(end);
+
+    marker_array.markers.push_back(arrow);
 }
 
 int main(int argc, char **argv) {
-  ros::init(argc, argv, "STD_descriptor");
-  ros::NodeHandle nh;
+    ros::init(argc, argv, "STD_descriptor");
+    ros::NodeHandle nh;
 
-  ConfigSetting config_setting;
-  read_parameters(nh, config_setting);
+    ConfigSetting config_setting;
+    read_parameters(nh, config_setting);
 
-  ros::Publisher pubkeycurr = nh.advertise<visualization_msgs::MarkerArray>("std_curr", 10);
-  ros::Publisher pubkeyprev = nh.advertise<visualization_msgs::MarkerArray>("std_prev", 10);
-  
-  ros::Publisher pub_curr_points = nh.advertise<sensor_msgs::PointCloud2>("std_curr_points", 10);
-  ros::Publisher pub_prev_points = nh.advertise<sensor_msgs::PointCloud2>("std_prev_points", 10);
-  ros::Publisher pubSTD =   nh.advertise<visualization_msgs::MarkerArray>("pair_std", 10);
+    ros::Publisher pubkeycurr = nh.advertise<visualization_msgs::MarkerArray>("std_curr", 10);
+    ros::Publisher pubkeyprev = nh.advertise<visualization_msgs::MarkerArray>("std_prev", 10);
+    
+    ros::Publisher pub_curr_points = nh.advertise<sensor_msgs::PointCloud2>("std_curr_points", 10);
+    ros::Publisher pub_prev_points = nh.advertise<sensor_msgs::PointCloud2>("std_prev_points", 10);
+    ros::Publisher pubSTD = nh.advertise<visualization_msgs::MarkerArray>("pair_std", 10);
 
-  ros::Publisher marker_pub_prev = nh.advertise<visualization_msgs::MarkerArray>("Axes_prev_STD", 10);
-  ros::Publisher marker_pub_curr = nh.advertise<visualization_msgs::MarkerArray>("Axes_curr_STD", 10);
+    ros::Publisher marker_pub_prev = nh.advertise<visualization_msgs::MarkerArray>("Axes_prev_STD", 10);
+    ros::Publisher marker_pub_curr = nh.advertise<visualization_msgs::MarkerArray>("Axes_curr_STD", 10);
 
-  ros::Subscriber subLaserCloud = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_points", 100, laserCloudHandler);
+    ros::Subscriber subLaserCloud = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_points", 100, laserCloudHandler);
 
-  ros::Subscriber subOdom = nh.subscribe<nav_msgs::Odometry>("/odom", 100, OdomHandler);
+    ros::Subscriber subOdom = nh.subscribe<nav_msgs::Odometry>("/odom", 100, OdomHandler);
 
-  STDescManager *std_manager = new STDescManager(config_setting);
-  std::vector<STDesc> stds_curr;
-  std::vector<STDesc> stds_prev;
+    STDescManager *std_manager = new STDescManager(config_setting);
+    std::vector<STDesc> stds_curr;
+    std::vector<STDesc> stds_prev;
 
-  
-  using matrix_t = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic>;
-  while (ros::ok()) {
-    ros::spinOnce();
+    // matrix of the std_descrptor to std_descriptor
+    using matrix_t = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic>;
+    std::vector<STDesc> std_local_map;
 
-    PointCloud::Ptr current_cloud_world(new PointCloud);
-    PointCloud::Ptr current_cloud(new PointCloud);
-    Eigen::Affine3d pose; // odometria 
+    Eigen::MatrixXf mat(0, 18);
+    std::unique_ptr<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>> index;
 
-    //if (readPC(current_cloud)) {
-      if (syncPackages(current_cloud, pose)) {
+    while (ros::ok()) {
+        ros::spinOnce();
 
-          // Transformando la nube de puntos segun la pose obtenida
-          // Extraer la matriz de rotación
-          // Eigen::Matrix3d rotation_matrix = pose.rotation();
-          
-          // // Convertir la matriz de rotación a un cuaternión
-          // Eigen::Quaterniond quaternion(rotation_matrix);
-          
-          // // Extraer la traslación
-          // Eigen::Vector3d translation = pose.translation();
+        PointCloud::Ptr current_cloud_world(new PointCloud);
+        PointCloud::Ptr current_cloud(new PointCloud);
+        Eigen::Affine3d pose; // odometria 
 
-          // // Imprimir la traslación
-          // std::cout << "Translation vector:" << std::endl;
-          // std::cout << translation << std::endl;
-
-          // // Imprimir el cuaternión
-          // std::cout << "Quaternion:" << std::endl;
-          // std::cout << "x: " << quaternion.x() << std::endl;
-          // std::cout << "y: " << quaternion.y() << std::endl;
-          // std::cout << "z: " << quaternion.z() << std::endl;
-          // std::cout << "w: " << quaternion.w() << std::endl;
-
-          ////////////////////////////////////////////////////
-
-          pcl::transformPointCloud(*current_cloud, *current_cloud_world, pose);
-          down_sampling_voxel(*current_cloud_world, 0.2);
-          // down sample body cloud
-          down_sampling_voxel(*current_cloud, 0.2);
+        if (syncPackages(current_cloud, pose)) {
+            pcl::transformPointCloud(*current_cloud, *current_cloud_world, pose);
+            down_sampling_voxel(*current_cloud_world, 0.2);
+            down_sampling_voxel(*current_cloud, 0.2);
                 
-          // step1. Descriptor Extraction
+            // step1. Descriptor Extraction
+            auto start = std::chrono::high_resolution_clock::now();
+            std_manager->GenerateSTDescs(current_cloud, stds_curr);
 
-          auto start = std::chrono::high_resolution_clock::now();
-          std_manager->GenerateSTDescs(current_cloud, stds_curr);
+            if (init_std) {
+                init_std = false;
+                stds_prev = stds_curr;
+                ROS_INFO("++++++++++ Iniciando Extraccion de STD ++++++++");
+            } else {
 
+                // Comparar stds_curr con std_local_map usando el KD-Tree actualizado
+                if (!stds_curr.empty()) {
+                    visualization_msgs::MarkerArray marker_array;
+                    int id = 0;
 
-          if(init_std){
-            init_std = false;
-            stds_prev = stds_curr;
-            ROS_INFO("++++++++++ Iniciando Extraccion de STD ++++++++");
-          }
-          else{
-            matrix_t mat(stds_curr.size(), 18); // Asumiendo 15 dimensiones para STDesc
-            // for (size_t i = 0; i < stds_curr.size(); ++i) {
-            //     mat.row(i) << stds_curr[i].side_length_.cast<float>(),
-            //                   stds_curr[i].angle_.cast<float>(),
-            //                   stds_curr[i].center_.cast<float>(),
-            //                   stds_curr[i].vertex_A_.cast<float>(),
-            //                   stds_curr[i].vertex_B_.cast<float>(),
-            //                   stds_curr[i].vertex_C_.cast<float>();
+                    for (const auto& desc : stds_curr) {
+                        std::vector<float> query;
+                        Eigen::Vector3f side_length = desc.side_length_.cast<float>();
+                        Eigen::Vector3f angle = desc.angle_.cast<float>();
+                        Eigen::Vector3f center = desc.center_.cast<float>();
+                        Eigen::Vector3f vertex_A = desc.vertex_A_.cast<float>();
+                        Eigen::Vector3f vertex_B = desc.vertex_B_.cast<float>();
+                        Eigen::Vector3f vertex_C = desc.vertex_C_.cast<float>();
 
-            //     std::cout<<"Mat añadido: "<< mat.row(i) <<std::endl;
-            // }
+                        query.insert(query.end(), side_length.data(), side_length.data() + 3);
+                        query.insert(query.end(), angle.data(), angle.data() + 3);
+                        query.insert(query.end(), center.data(), center.data() + 3);
+                        query.insert(query.end(), vertex_A.data(), vertex_A.data() + 3);
+                        query.insert(query.end(), vertex_B.data(), vertex_B.data() + 3);
+                        query.insert(query.end(), vertex_C.data(), vertex_C.data() + 3);
 
-            fillMatrix(mat,stds_curr);
-            std::cout<<"Se creo la matriz"<<std::endl;
+                        // Buscar el descriptor más cercano
+                        const size_t num_results = 1;
+                        std::vector<size_t> ret_indexes(num_results);
+                        std::vector<float> out_dists_sqr(num_results);
 
-            // Construir y reiniciar el KD-Tree en cada iteración
-            nanoflann::KDTreeEigenMatrixAdaptor<matrix_t> index(18, std::cref(mat), 10 /* max leaf */);
-            index.index_->buildIndex();
+                        nanoflann::KNNResultSet<float> resultSet(num_results);
+                        resultSet.init(&ret_indexes[0], &out_dists_sqr[0]);
+                        index->index_->findNeighbors(resultSet, query.data());
 
-            if (!stds_prev.empty()) {
-                for (const auto& desc : stds_prev) {
-                   // std::cout<<"Buscando---------------"<<std::endl;
-                  //  printSTDesc(desc);               
+                        for (size_t i = 0; i < resultSet.size(); i++) {
+                           
+                            if (ret_indexes[i] < std_local_map.size() && out_dists_sqr[i] < 50) {
 
-                    // Usar el primer elemento de stds_prev como query
-                    std::vector<float> query;
+                                 std::cout << "ret_index[" << i << "]=" << ret_indexes[i]<< " out_dist_sqr=" << out_dists_sqr[i] << std::endl;
 
-                    Eigen::Vector3f side_length = desc.side_length_.cast<float>();
-                    Eigen::Vector3f angle = desc.angle_.cast<float>();
-                    Eigen::Vector3f center = desc.center_.cast<float>();
-                    Eigen::Vector3f vertex_A = desc.vertex_A_.cast<float>();
-                    Eigen::Vector3f vertex_B = desc.vertex_B_.cast<float>();
-                    Eigen::Vector3f vertex_C = desc.vertex_C_.cast<float>();
-
-                    query.insert(query.end(), side_length.data(), side_length.data() + 3);
-                    query.insert(query.end(), angle.data(), angle.data() + 3);
-                    query.insert(query.end(), center.data(), center.data() + 3);
-                    query.insert(query.end(), vertex_A.data(), vertex_A.data() + 3);
-                    query.insert(query.end(), vertex_B.data(), vertex_B.data() + 3);
-                    query.insert(query.end(), vertex_C.data(), vertex_C.data() + 3);
-
-                  //  printVector(query);
-                    // Buscar el descriptor más cercano
-                    const size_t num_results = 3;
-                    std::vector<size_t> ret_indexes(num_results);
-                    std::vector<float> out_dists_sqr(num_results);
-
-                    nanoflann::KNNResultSet<float> resultSet(num_results);
-                    resultSet.init(&ret_indexes[0], &out_dists_sqr[0]);
-                    index.index_->findNeighbors(resultSet, query.data());
-
-                  //  std::cout << "knnSearch(nn=" << num_results << "): \n";
-                    for (size_t i = 0; i < resultSet.size(); i++){
-                        std::cout << "ret_index[" << i << "]=" << ret_indexes[i]
-                                  << " out_dist_sqr=" << out_dists_sqr[i] << std::endl;
-
-                      // std::cout<<"Resultado: "<<std::endl;
-                      // std::cout << mat.row(ret_indexes[i]) << std::endl;
-
-                      // STDesc closest = stds_curr[ret_indexes[i]];
-                      // std::cout << "Descriptor más cercano encontrado:\n";
-                      // printSTDesc(closest);
+                                // Llamar a generateArrow para crear la flecha entre descriptores
+                                generateArrow(desc, std_local_map[ret_indexes[i]], marker_array, id, msg_point->header );
+                            } else {
+                                std::cerr << "Error: ret_indexes[" << i << "] está fuera de los límites de std_local_map." << std::endl;
+                            }
+                        }
                     }
-                 }
+
+                    // Publicar las flechas en RViz
+                    pubSTD.publish(marker_array);
+                    visualization_msgs::Marker delete_marker_curr;
+                    delete_marker_curr.action = visualization_msgs::Marker::DELETEALL;
+                    marker_array.markers.clear();  // Asegúrate de que el array de marcadores esté vacío
+                    marker_array.markers.push_back(delete_marker_curr);
+                    pubSTD.publish(marker_array);
+                }
             }
-          }
 
-          auto end = std::chrono::high_resolution_clock::now();
-          std::chrono::duration<double> elapsed = end - start;
+            // Agregar descriptores actuales a std_local_map
+            std_local_map.insert(std_local_map.end(), stds_curr.begin(), stds_curr.end());
 
-          ROS_INFO("Extracted %lu ST", stds_curr.size());
-          ROS_INFO("Extracted %lu ST descriptors in %f seconds", stds_prev.size(), elapsed.count());
-
-
-          ////// Llenando el std_pair con los stds prev y current
-          // std::vector<STDesc> std_pair;
-          // std_pair.insert(std_pair.end(), stds_prev.begin(), stds_prev.end());
-          // std_pair.insert(std_pair.end(), stds_curr.begin(), stds_curr.end());
-          
-          //////////////////////////////////////////////
+            // Actualizar la matriz y el KD-Tree con std_local_map
+            updateMatrixAndKDTree(mat, index, std_local_map);
 
 
-          // step2. Searching pairs
-          // std::pair<int, double> search_result(-1, 0);
-          // std::pair<Eigen::Vector3d, Eigen::Matrix3d> loop_transform;
-          // loop_transform.first << 0, 0, 0;
-          // loop_transform.second = Eigen::Matrix3d::Identity();
-          // std::vector<std::pair<STDesc, STDesc>> loop_std_pair;
+            auto end = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<double> elapsed = end - start;
 
-          // std_manager->SearchLoop(std_pair, search_result, loop_transform, loop_std_pair);
-          // ROS_INFO("Pairs %lu STD", loop_std_pair.size());
-          // publish_std_pairs(loop_std_pair, pubSTD);
-
-          // // step3. Add descriptors to the database
-          // std_manager->AddSTDescs(std_pair);
-
-
-          ////// matching anterior
-
-          // std::vector<std::pair<STDesc, STDesc>> matched_pairs;
-          // std_manager->MatchConsecutiveFrames(stds_prev, stds_curr, matched_pairs);
-          // ROS_INFO("Pairs %lu ST", matched_pairs.size());
-          // publish_std_pairs(matched_pairs, pubSTD);
-
-
-          std_manager->publishAxes(marker_pub_prev, stds_prev, msg_point->header);
-          std_manager->publishAxes(marker_pub_curr, stds_curr, msg_point->header);
-
-
-
-          ///////////////////////////////
+            ROS_INFO("Extracted %lu ST", stds_curr.size());
+            ROS_INFO("Extracted %lu ST descriptors in %f seconds", stds_prev.size(), elapsed.count());
 
 
 
 
           /////////////////// Data visualization //////////////////////////////////////////////
+
+
+             std_manager->publishAxes(marker_pub_prev, stds_prev, msg_point->header);
+             std_manager->publishAxes(marker_pub_curr, stds_curr, msg_point->header);
+
         
-            // ////// visualizacion de los keypoints current
+            // //// visualizacion de los keypoints current
             // visualization_msgs::MarkerArray marker_array_curr;
             // Eigen::Vector3f colorVector_curr(0.0f, 0.0f, 1.0f);  // azul
 
             // convertToMarkers(stds_curr, marker_array_curr,colorVector_curr ,0.5 );
             // pubkeycurr.publish(marker_array_curr);
-            // visualization_msgs::Marker delete_marker_curr;
-            // delete_marker_curr.action = visualization_msgs::Marker::DELETEALL;
-            // marker_array_curr.markers.clear();  // Asegúrate de que el array de marcadores esté vacío
-            // marker_array_curr.markers.push_back(delete_marker_curr);
-            // pubkeycurr.publish(marker_array_curr);
+            //  visualization_msgs::Marker delete_marker_curr;
+            //  delete_marker_curr.action = visualization_msgs::Marker::DELETEALL;
+            //  marker_array_curr.markers.clear();  // Asegúrate de que el array de marcadores esté vacío
+            //  marker_array_curr.markers.push_back(delete_marker_curr);
+            // /pubkeycurr.publish(marker_array_curr);
             // //////////////////////////////////////////
 
             // ////// publicacion de nube de puntos en los vertices de los stds
@@ -430,10 +426,10 @@ int main(int argc, char **argv) {
             // pub_curr_points.publish(output_curr);
             // //////////////////////////////////////////
 
-            // /////////////////////// Previous std
+            // ///////////////////// Previous std
             // ////// visualizacion de los keypoints prev
             // visualization_msgs::MarkerArray marker_array_prev;
-            // Eigen::Vector3f colorVector_prev(1.0f, 0.0f, 0.0f);  // azul
+            // Eigen::Vector3f colorVector_prev(1.0f, 0.0f, 0.0f);  // rojo
             // convertToMarkers(stds_prev, marker_array_prev,colorVector_prev ,0.5 );
             // pubkeyprev.publish(marker_array_prev);
             // visualization_msgs::Marker delete_marker_prev;
@@ -452,12 +448,12 @@ int main(int argc, char **argv) {
             // pub_prev_points.publish(output_prev);
             // //////////////////////////////////////////
 
-          //////////////////////////////////////////////////////////////////////////////////////////////////
+            //////////////////////////////////////////////////////////////////////////////////////////////////
+            // Actualizar stds_prev
+            stds_prev = stds_curr;
+        }
+    }
 
-          stds_prev = stds_curr;
-      }
-   // }
-  }
-
-  return 0;
+    return 0;
 }
+

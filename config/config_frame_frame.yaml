@@ -1,6 +1,6 @@
 # pre process
 ds_size: 0.25
-maximum_corner_num: 300
+maximum_corner_num: 20
 
 # key points
 plane_detection_thre: 0.01
