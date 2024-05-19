@@ -320,7 +320,7 @@ int main(int argc, char **argv) {
                 
             // step1. Descriptor Extraction
             auto start = std::chrono::high_resolution_clock::now();
-            std_manager->GenerateSTDescs(current_cloud_world, stds_curr);
+            std_manager->GenerateSTDescs(current_cloud, stds_curr);
             
             int cont_desc_pairs = 0;
             if (init_std) {
@@ -366,7 +366,7 @@ int main(int argc, char **argv) {
 
                         for (size_t i = 0; i < resultSet.size(); i++) {
                            
-                            if (ret_indexes[i] < std_local_map.size() && out_dists_sqr[i] < 50) {
+                            if (ret_indexes[i] < std_local_map.size() && out_dists_sqr[i] < config_setting.kdtree_threshold_) {
                                 cont_desc_pairs++;
                                //  std::cout << "ret_index[" << i << "]=" << ret_indexes[i]<< " out_dist_sqr=" << out_dists_sqr[i] << std::endl;
 

@@ -93,6 +93,8 @@ void read_parameters(ros::NodeHandle &nh, ConfigSetting &config_setting) {
   nh.param<double>("dis_threshold", config_setting.dis_threshold_, 0.5);
 
   nh.param<int>("max_window_size", config_setting.max_window_size_, 10);
+  nh.param<double>("kdtree_threshold", config_setting.kdtree_threshold_, 50);
+  
 
   std::cout << "Sucessfully load parameters:" << std::endl;
   std::cout << "----------------Main Parameters-------------------"
@@ -107,6 +109,8 @@ void read_parameters(ros::NodeHandle &nh, ConfigSetting &config_setting) {
   std::cout << "maximum corners size: " << config_setting.maximum_corner_num_
             << std::endl;
   std::cout << "max window size: " << config_setting.max_window_size_
+            << std::endl;
+  std::cout << "max window size: " << config_setting.kdtree_threshold_
             << std::endl;
 }
 
@@ -498,7 +502,7 @@ void STDescManager::MatchConsecutiveFrames(const std::vector<STDesc>& prev_descs
 void STDescManager::publishAxes(const ros::Publisher& marker_pub, const std::vector<STDesc>& descs, const std_msgs::Header& header) {
     visualization_msgs::MarkerArray marker_array;
     int id = 0;
-    float shaft_diameter = 0.05;  // Diámetro del eje
+    float shaft_diameter = 0.01;  // Diámetro del eje
 
     // Iterar sobre cada descriptor en el vector
     for (const auto& desc : descs) {
