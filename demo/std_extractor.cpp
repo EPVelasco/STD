@@ -213,9 +213,8 @@ void addDescriptorToMatrix(Eigen::MatrixXf& mat, const STDesc& desc, int row) {
     mat.block<1, 3>(row, 15) = vertex_C.transpose();
 }
 
-void updateMatrixAndKDTree(Eigen::MatrixXf& mat, std::unique_ptr<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>>& index, const std::vector<STDesc>& std_local_map) {
-    const int max_window_size = 10;
-
+void updateMatrixAndKDTree(Eigen::MatrixXf& mat, std::unique_ptr<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>>& index, std::deque<STDesc>& std_local_map) {
+   
     int num_desc = std_local_map.size();
     mat.conservativeResize(num_desc, 18);
 
@@ -244,9 +243,9 @@ void generateArrow(const STDesc& desc1, const STDesc& desc2, visualization_msgs:
     arrow.id = id++;
     arrow.type = visualization_msgs::Marker::ARROW;
     arrow.action = visualization_msgs::Marker::ADD;
-    arrow.scale.x = 0.02;  // Grosor del cuerpo de la flecha
-    arrow.scale.y = 0.04;  // Grosor de la cabeza de la flecha
-    arrow.scale.z = 0.1;   // Longitud de la cabeza de la flecha
+    arrow.scale.x = 0.1;  // Grosor del cuerpo de la flecha
+    arrow.scale.y = 0.4;  // Grosor de la cabeza de la flecha
+    arrow.scale.z = 0.8;   // Longitud de la cabeza de la flecha
     
     // Generar color aleatorio
     auto [r, g, b] = getRandomColor();
@@ -300,10 +299,12 @@ int main(int argc, char **argv) {
 
     // matrix of the std_descrptor to std_descriptor
     using matrix_t = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic>;
-    std::vector<STDesc> std_local_map;
+    std::deque<STDesc> std_local_map;
 
     Eigen::MatrixXf mat(0, 18);
     std::unique_ptr<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>> index;
+    const int max_window_size = 1;
+    static std::deque<int> counts_per_iteration;
 
     while (ros::ok()) {
         ros::spinOnce();
@@ -314,24 +315,30 @@ int main(int argc, char **argv) {
 
         if (syncPackages(current_cloud, pose)) {
             pcl::transformPointCloud(*current_cloud, *current_cloud_world, pose);
-            down_sampling_voxel(*current_cloud_world, 0.2);
-            down_sampling_voxel(*current_cloud, 0.2);
+            down_sampling_voxel(*current_cloud_world, config_setting.ds_size_);
+            down_sampling_voxel(*current_cloud, config_setting.ds_size_);
                 
             // step1. Descriptor Extraction
             auto start = std::chrono::high_resolution_clock::now();
             std_manager->GenerateSTDescs(current_cloud, stds_curr);
-
+            
+            int cont_desc_pairs = 0;
             if (init_std) {
                 init_std = false;
                 stds_prev = stds_curr;
                 ROS_INFO("++++++++++ Iniciando Extraccion de STD ++++++++");
             } else {
 
+                // Actualizar la matriz y el KD-Tree con std_local_map
+                // Agregar descriptores actuales a std_local_map            
+
+                updateMatrixAndKDTree(mat, index, std_local_map);
+
                 // Comparar stds_curr con std_local_map usando el KD-Tree actualizado
                 if (!stds_curr.empty()) {
                     visualization_msgs::MarkerArray marker_array;
                     int id = 0;
-
+ 
                     for (const auto& desc : stds_curr) {
                         std::vector<float> query;
                         Eigen::Vector3f side_length = desc.side_length_.cast<float>();
@@ -360,10 +367,11 @@ int main(int argc, char **argv) {
                         for (size_t i = 0; i < resultSet.size(); i++) {
                            
                             if (ret_indexes[i] < std_local_map.size() && out_dists_sqr[i] < 50) {
-
-                                 std::cout << "ret_index[" << i << "]=" << ret_indexes[i]<< " out_dist_sqr=" << out_dists_sqr[i] << std::endl;
+                                cont_desc_pairs++;
+                               //  std::cout << "ret_index[" << i << "]=" << ret_indexes[i]<< " out_dist_sqr=" << out_dists_sqr[i] << std::endl;
 
                                 // Llamar a generateArrow para crear la flecha entre descriptores
+
                                 generateArrow(desc, std_local_map[ret_indexes[i]], marker_array, id, msg_point->header );
                             } else {
                                 std::cerr << "Error: ret_indexes[" << i << "] está fuera de los límites de std_local_map." << std::endl;
@@ -380,12 +388,31 @@ int main(int argc, char **argv) {
                     pubSTD.publish(marker_array);
                 }
             }
+            std::cout<<"Pares encontrados: "<<cont_desc_pairs<<std::endl;
 
-            // Agregar descriptores actuales a std_local_map
+            
+
+           
+
+            // Añadir los nuevos descriptores de stds_curr a std_local_map
+            // for (const auto& desc : stds_curr) {
+            //     std_local_map.push_back(desc);
+            // }
             std_local_map.insert(std_local_map.end(), stds_curr.begin(), stds_curr.end());
 
-            // Actualizar la matriz y el KD-Tree con std_local_map
-            updateMatrixAndKDTree(mat, index, std_local_map);
+            // Añadir el conteo de descriptores añadidos en esta iteración
+            counts_per_iteration.push_back(stds_curr.size());
+
+            // Si el tamaño de counts_per_iteration excede max_window_size, eliminar los descriptores más antiguos
+            while (counts_per_iteration.size() > max_window_size) {
+                int count_to_remove = counts_per_iteration.front();
+                counts_per_iteration.pop_front();
+
+                // Eliminar los descriptores más antiguos de std_local_map
+                for (int i = 0; i < count_to_remove; ++i) {
+                    std_local_map.pop_front();
+                }
+            }
 
 
             auto end = std::chrono::high_resolution_clock::now();
