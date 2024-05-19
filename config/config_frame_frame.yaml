@@ -29,6 +29,8 @@ normal_threshold: 0.2
 dis_threshold: 0.5
 icp_threshold: 0.4
 
+# window size
+max_window_size: 10
 # # candidate search
 # skip_near_num: 20
 # candidate_num: 20

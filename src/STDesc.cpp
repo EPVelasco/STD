@@ -92,6 +92,8 @@ void read_parameters(ros::NodeHandle &nh, ConfigSetting &config_setting) {
   nh.param<double>("normal_threshold", config_setting.normal_threshold_, 0.2);
   nh.param<double>("dis_threshold", config_setting.dis_threshold_, 0.5);
 
+  nh.param<int>("max_window_size", config_setting.max_window_size_, 10);
+
   std::cout << "Sucessfully load parameters:" << std::endl;
   std::cout << "----------------Main Parameters-------------------"
             << std::endl;
@@ -103,6 +105,8 @@ void read_parameters(ros::NodeHandle &nh, ConfigSetting &config_setting) {
   std::cout << "candidate number: " << config_setting.candidate_num_
             << std::endl;
   std::cout << "maximum corners size: " << config_setting.maximum_corner_num_
+            << std::endl;
+  std::cout << "max window size: " << config_setting.max_window_size_
             << std::endl;
 }
 

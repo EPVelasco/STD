@@ -58,6 +58,7 @@ typedef struct ConfigSetting {
   double icp_threshold_ = 0.5;
   double normal_threshold_ = 0.1;
   double dis_threshold_ = 0.3;
+  int max_window_size_ = 10;
 
 } ConfigSetting;
 

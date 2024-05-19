@@ -303,7 +303,7 @@ int main(int argc, char **argv) {
 
     Eigen::MatrixXf mat(0, 18);
     std::unique_ptr<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>> index;
-    const int max_window_size = 1;
+    //const int max_window_size = 1;
     static std::deque<int> counts_per_iteration;
 
     while (ros::ok()) {
@@ -320,7 +320,7 @@ int main(int argc, char **argv) {
                 
             // step1. Descriptor Extraction
             auto start = std::chrono::high_resolution_clock::now();
-            std_manager->GenerateSTDescs(current_cloud, stds_curr);
+            std_manager->GenerateSTDescs(current_cloud_world, stds_curr);
             
             int cont_desc_pairs = 0;
             if (init_std) {
@@ -373,9 +373,10 @@ int main(int argc, char **argv) {
                                 // Llamar a generateArrow para crear la flecha entre descriptores
 
                                 generateArrow(desc, std_local_map[ret_indexes[i]], marker_array, id, msg_point->header );
-                            } else {
-                                std::cerr << "Error: ret_indexes[" << i << "] está fuera de los límites de std_local_map." << std::endl;
                             }
+                            //else {
+                            //     std::cerr << "Error: ret_indexes[" << i << "] está fuera de los límites de std_local_map." << std::endl;
+                            // }
                         }
                     }
 
@@ -404,7 +405,7 @@ int main(int argc, char **argv) {
             counts_per_iteration.push_back(stds_curr.size());
 
             // Si el tamaño de counts_per_iteration excede max_window_size, eliminar los descriptores más antiguos
-            while (counts_per_iteration.size() > max_window_size) {
+            while (counts_per_iteration.size() > config_setting.max_window_size_) {
                 int count_to_remove = counts_per_iteration.front();
                 counts_per_iteration.pop_front();
 
