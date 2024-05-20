@@ -396,17 +396,13 @@ int main(int argc, char **argv) {
                            
                             if (ret_indexes[i] < std_local_map.size() && out_dists_sqr[i] < config_setting.kdtree_threshold_) {
                                 cont_desc_pairs++;
-                               //  std::cout << "ret_index[" << i << "]=" << ret_indexes[i]<< " out_dist_sqr=" << out_dists_sqr[i] << std::endl;
-
+                                // std::cout << "ret_index[" << i << "]=" << ret_indexes[i]<< " out_dist_sqr=" << out_dists_sqr[i] << std::endl;
                                 // Llamar a generateArrow para crear la flecha entre descriptores
 
                                 generateArrow(desc, std_local_map[ret_indexes[i]], marker_array, id, msg_point->header );
 
-                                 stds_prev_pair.push_back(std_local_map[ret_indexes[i]]);
-                                 stds_curr_pair.push_back(desc);
-                                
-                                // std_manager->publishAxes(marker_pub_prev, axes_prev, msg_point->header);
-                                // std_manager->publishAxes(marker_pub_curr, axes_curr, msg_point->header);
+                                stds_prev_pair.push_back(std_local_map[ret_indexes[i]]);
+                                stds_curr_pair.push_back(desc);
                             }
                             //else {
                             //     std::cerr << "Error: ret_indexes[" << i << "] está fuera de los límites de std_local_map." << std::endl;
@@ -426,10 +422,10 @@ int main(int argc, char **argv) {
             std::cout<<"Pares encontrados: "<<cont_desc_pairs<<std::endl;
 
             // Añadir los nuevos descriptores de stds_curr a std_local_map
-            std_local_map.insert(std_local_map.end(), stds_curr.begin(), stds_curr.end());
+            std_local_map.insert(std_local_map.end(), stds_prev.begin(), stds_prev.end());
 
             // Añadir el conteo de descriptores añadidos en esta iteración
-            counts_per_iteration.push_back(stds_curr.size());
+            counts_per_iteration.push_back(stds_prev.size());
 
             // Si el tamaño de counts_per_iteration excede max_window_size, eliminar los descriptores más antiguos
             while (counts_per_iteration.size() > config_setting.max_window_size_) {
