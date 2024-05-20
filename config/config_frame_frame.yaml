@@ -1,6 +1,6 @@
 # pre process
 ds_size: 0.2
-maximum_corner_num: 100
+maximum_corner_num: 200
 
 # key points
 plane_detection_thre: 0.01
@@ -13,11 +13,11 @@ proj_dis_max: 5
 corner_thre: 10
 
 # std descriptor
-descriptor_near_num: 10
+descriptor_near_num: 20
 descriptor_min_len: 2
-descriptor_max_len: 50
+descriptor_max_len: 100
 non_max_suppression_radius: 2
-std_side_resolution: 0.2
+std_side_resolution: 0.15
 
 # candidate search
 skip_near_num: 10
@@ -31,7 +31,7 @@ icp_threshold: 0.4
 
 # window size
 max_window_size: 1
-kdtree_threshold: 20
+kdtree_threshold: 50
 # # candidate search
 # skip_near_num: 20
 # candidate_num: 20

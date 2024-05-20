@@ -100,6 +100,6 @@ add_executable(std_example demo/std_extractor.cpp src/STDesc.cpp src/KDTree_STD.
                 ${catkin_LIBRARIES}
                 ${PCL_LIBRARIES}
                 ${OpenCV_LIBS}
-                ${CERES_LIBRARIES}
+                ${CERES_LIBRARIES})
                 #gtsam
-                nanoflann::nanoflann)
+               #nanoflann::nanoflann)

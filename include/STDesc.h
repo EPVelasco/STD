@@ -21,6 +21,11 @@
 
 #include <nanoflann.hpp> // nanoflann library
 
+// ROS Pose
+#include <geometry_msgs/PoseArray.h>
+#include <geometry_msgs/Pose.h>
+#include <tf2/LinearMath/Quaternion.h>
+
 #define HASH_P 116101
 #define MAX_N 10000000000
 #define MAX_FRAME_N 20000
@@ -370,6 +375,9 @@ public:
   void MatchConsecutiveFrames(const std::vector<STDesc>& prev_descs, const std::vector<STDesc>& curr_descs, std::vector<std::pair<STDesc, STDesc>>& matched_pairs);
   void publish_matched_pairs(const std::vector<std::pair<STDesc, STDesc>>& matched_pairs, const ros::Publisher& pub);
   void publishAxes(const ros::Publisher& marker_pub, const std::vector<STDesc>&, const std_msgs::Header& header);
+  void publishPoses(const ros::Publisher& pose_pub, const std::vector<STDesc>& descs, const std_msgs::Header& header);
+
+  //void publishAxes(const ros::Publisher& marker_pub, const std::vector<STDesc>&, const std_msgs::Header& header);
 
 private:
   /*Following are sub-processing functions*/

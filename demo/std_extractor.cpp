@@ -243,9 +243,9 @@ void generateArrow(const STDesc& desc1, const STDesc& desc2, visualization_msgs:
     arrow.id = id++;
     arrow.type = visualization_msgs::Marker::ARROW;
     arrow.action = visualization_msgs::Marker::ADD;
-    arrow.scale.x = 0.1;  // Grosor del cuerpo de la flecha
-    arrow.scale.y = 0.4;  // Grosor de la cabeza de la flecha
-    arrow.scale.z = 0.8;   // Longitud de la cabeza de la flecha
+    arrow.scale.x = 0.025;  // Grosor del cuerpo de la flecha
+    arrow.scale.y = 0.1;  // Grosor de la cabeza de la flecha
+    arrow.scale.z = 0.2;   // Longitud de la cabeza de la flecha
     
     // Generar color aleatorio
     auto [r, g, b] = getRandomColor();
@@ -289,6 +289,9 @@ int main(int argc, char **argv) {
     ros::Publisher marker_pub_prev = nh.advertise<visualization_msgs::MarkerArray>("Axes_prev_STD", 10);
     ros::Publisher marker_pub_curr = nh.advertise<visualization_msgs::MarkerArray>("Axes_curr_STD", 10);
 
+    ros::Publisher pose_pub_prev = nh.advertise<geometry_msgs::PoseArray>("std_prev_poses", 10);
+    ros::Publisher pose_pub_curr = nh.advertise<geometry_msgs::PoseArray>("std_curr_poses", 10);
+
     ros::Subscriber subLaserCloud = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_points", 100, laserCloudHandler);
 
     ros::Subscriber subOdom = nh.subscribe<nav_msgs::Odometry>("/odom", 100, OdomHandler);
@@ -296,6 +299,8 @@ int main(int argc, char **argv) {
     STDescManager *std_manager = new STDescManager(config_setting);
     std::vector<STDesc> stds_curr;
     std::vector<STDesc> stds_prev;
+
+
 
     // matrix of the std_descrptor to std_descriptor
     using matrix_t = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic>;
@@ -305,16 +310,39 @@ int main(int argc, char **argv) {
     std::unique_ptr<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>> index;
     //const int max_window_size = 1;
     static std::deque<int> counts_per_iteration;
+    PointCloud::Ptr current_cloud_world(new PointCloud);
+    PointCloud::Ptr current_cloud(new PointCloud);
+    Eigen::Affine3d pose; // odometria 
 
     while (ros::ok()) {
         ros::spinOnce();
-
-        PointCloud::Ptr current_cloud_world(new PointCloud);
-        PointCloud::Ptr current_cloud(new PointCloud);
-        Eigen::Affine3d pose; // odometria 
+        std::vector<STDesc> stds_curr_pair;
+        std::vector<STDesc> stds_prev_pair;
 
         if (syncPackages(current_cloud, pose)) {
             pcl::transformPointCloud(*current_cloud, *current_cloud_world, pose);
+            // //Transformando la nube de puntos segun la pose obtenida
+            // //Extraer la matriz de rotación
+            // Eigen::Matrix3d rotation_matrix = pose.rotation();
+
+            // // Convertir la matriz de rotación a un cuaternión
+            // Eigen::Quaterniond quaternion(rotation_matrix);
+
+            // // Extraer la traslación
+            // Eigen::Vector3d translation = pose.translation();
+
+            // // Imprimir la traslación
+            // std::cout << "Translation vector:" << std::endl;
+            // std::cout << translation << std::endl;
+
+            // // Imprimir el cuaternión
+            // std::cout << "Quaternion:" << std::endl;
+            // std::cout << "x: " << quaternion.x() << std::endl;
+            // std::cout << "y: " << quaternion.y() << std::endl;
+            // std::cout << "z: " << quaternion.z() << std::endl;
+            // std::cout << "w: " << quaternion.w() << std::endl;
+
+            // //////////////////////////////////////////////////
             down_sampling_voxel(*current_cloud_world, config_setting.ds_size_);
             down_sampling_voxel(*current_cloud, config_setting.ds_size_);
                 
@@ -373,6 +401,12 @@ int main(int argc, char **argv) {
                                 // Llamar a generateArrow para crear la flecha entre descriptores
 
                                 generateArrow(desc, std_local_map[ret_indexes[i]], marker_array, id, msg_point->header );
+
+                                 stds_prev_pair.push_back(std_local_map[ret_indexes[i]]);
+                                 stds_curr_pair.push_back(desc);
+                                
+                                // std_manager->publishAxes(marker_pub_prev, axes_prev, msg_point->header);
+                                // std_manager->publishAxes(marker_pub_curr, axes_curr, msg_point->header);
                             }
                             //else {
                             //     std::cerr << "Error: ret_indexes[" << i << "] está fuera de los límites de std_local_map." << std::endl;
@@ -391,14 +425,7 @@ int main(int argc, char **argv) {
             }
             std::cout<<"Pares encontrados: "<<cont_desc_pairs<<std::endl;
 
-            
-
-           
-
             // Añadir los nuevos descriptores de stds_curr a std_local_map
-            // for (const auto& desc : stds_curr) {
-            //     std_local_map.push_back(desc);
-            // }
             std_local_map.insert(std_local_map.end(), stds_curr.begin(), stds_curr.end());
 
             // Añadir el conteo de descriptores añadidos en esta iteración
@@ -415,23 +442,21 @@ int main(int argc, char **argv) {
                 }
             }
 
-
             auto end = std::chrono::high_resolution_clock::now();
             std::chrono::duration<double> elapsed = end - start;
 
             ROS_INFO("Extracted %lu ST", stds_curr.size());
             ROS_INFO("Extracted %lu ST descriptors in %f seconds", stds_prev.size(), elapsed.count());
 
+          //std_manager->publishAxes(marker_pub_prev, stds_prev_pair, msg_point->header);
+          //std_manager->publishAxes(marker_pub_curr, stds_curr_pair, msg_point->header);
 
+          std_manager->publishPoses(pose_pub_prev, stds_prev_pair, msg_point->header);
+          std_manager->publishPoses(pose_pub_curr, stds_curr_pair, msg_point->header);
 
 
           /////////////////// Data visualization //////////////////////////////////////////////
 
-
-             std_manager->publishAxes(marker_pub_prev, stds_prev, msg_point->header);
-             std_manager->publishAxes(marker_pub_curr, stds_curr, msg_point->header);
-
-        
             // //// visualizacion de los keypoints current
             // visualization_msgs::MarkerArray marker_array_curr;
             // Eigen::Vector3f colorVector_curr(0.0f, 0.0f, 1.0f);  // azul

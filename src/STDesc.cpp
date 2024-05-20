@@ -502,7 +502,7 @@ void STDescManager::MatchConsecutiveFrames(const std::vector<STDesc>& prev_descs
 void STDescManager::publishAxes(const ros::Publisher& marker_pub, const std::vector<STDesc>& descs, const std_msgs::Header& header) {
     visualization_msgs::MarkerArray marker_array;
     int id = 0;
-    float shaft_diameter = 0.01;  // Diámetro del eje
+    float shaft_diameter = 0.03;  // Diámetro del eje
 
     // Iterar sobre cada descriptor en el vector
     for (const auto& desc : descs) {
@@ -535,9 +535,9 @@ void STDescManager::publishAxes(const ros::Publisher& marker_pub, const std::vec
             start.x = desc.center_.x();
             start.y = desc.center_.y();
             start.z = desc.center_.z();
-            end.x = start.x + axes(0, i);
-            end.y = start.y + axes(1, i);
-            end.z = start.z + axes(2, i);
+            end.x = start.x + axes(0, i)*0.2;
+            end.y = start.y + axes(1, i)*0.2;
+            end.z = start.z + axes(2, i)*0.2;
 
             marker.points.push_back(start);
             marker.points.push_back(end);
@@ -548,6 +548,35 @@ void STDescManager::publishAxes(const ros::Publisher& marker_pub, const std::vec
 
     // Publicar el array de marcadores
     marker_pub.publish(marker_array);
+}
+
+void STDescManager::publishPoses(const ros::Publisher& pose_pub, const std::vector<STDesc>& descs, const std_msgs::Header& header) {
+    geometry_msgs::PoseArray pose_array;
+    pose_array.header = header;
+
+    // Iterar sobre cada descriptor en el vector
+    for (const auto& desc : descs) {
+        Eigen::Matrix3d axes = desc.calculateReferenceFrame();
+
+        geometry_msgs::Pose pose;
+        // Establecer la posición
+        pose.position.x = desc.center_.x();
+        pose.position.y = desc.center_.y();
+        pose.position.z = desc.center_.z();
+
+        // Establecer la orientación utilizando la matriz de referencia de cada descriptor
+        Eigen::Quaterniond q(axes);
+        pose.orientation.x = q.x();
+        pose.orientation.y = q.y();
+        pose.orientation.z = q.z();
+        pose.orientation.w = q.w();
+
+        // Añadir la pose al array
+        pose_array.poses.push_back(pose);
+    }
+
+    // Publicar el array de poses
+    pose_pub.publish(pose_array);
 }
 
 
