@@ -333,9 +333,12 @@ int main(int argc, char **argv) {
                   // //////////////////////////////////////////////////
 
                 pcl::transformPointCloud(*current_cloud, *current_cloud_world, pose_prev);
+                // std::cout << "Transformación de la nube de puntos completada" << std::endl;
+                // std::cout << "Pose actual: " << pose.matrix() << std::endl;
+                // std::cout << "Pose previa: " << pose_prev.matrix() << std::endl;
                 pose_prev = pose;
                 down_sampling_voxel(*current_cloud_world, config_setting.ds_size_);
-                std_manager->GenerateSTDescs(current_cloud_world, stds_curr);
+                std_manager->GenerateSTDescs(current_cloud, stds_curr);
 
                
 
@@ -396,10 +399,6 @@ int main(int argc, char **argv) {
                     pubSTD.publish(marker_array);
                 }
                 
-                
-                
-                
-
 
             }
             std::cout<<"Pares encontrados: "<<cont_desc_pairs<<std::endl;
@@ -408,11 +407,9 @@ int main(int argc, char **argv) {
             std_local_map.insert(std_local_map.end(), stds_curr.begin(), stds_curr.end());
             counts_per_iteration.push_back(stds_curr.size());
 
-            // Si el tamaño de counts_per_iteration excede max_window_size, eliminar los descriptores más antiguos
             while (counts_per_iteration.size() > config_setting.max_window_size_) {
                 int count_to_remove = counts_per_iteration.front();
                 counts_per_iteration.pop_front();
-                // Eliminar los descriptores más antiguos de std_local_map
                 for (int i = 0; i < count_to_remove; ++i) {
                     std_local_map.pop_front();
                 }
@@ -424,6 +421,7 @@ int main(int argc, char **argv) {
 
             ROS_INFO("Extracted %lu ST", stds_curr.size());
             ROS_INFO("Extracted %lu ST descriptors in %f seconds", stds_prev.size(), elapsed.count());
+            std::cout << "Tamaño de std_local_map: " << std_local_map.size() << std::endl;
 
           //std_manager->publishAxes(marker_pub_prev, stds_prev_pair, msg_point->header);
           //std_manager->publishAxes(marker_pub_curr, stds_curr_pair, msg_point->header);
