@@ -25,6 +25,9 @@
 #include <nav_msgs/Odometry.h>
 #include <nav_msgs/Path.h>
 
+#include <pcl/filters/voxel_grid.h>
+
+
 // Time
 #include <chrono>
 
@@ -213,10 +216,9 @@ void addDescriptorToMatrix(Eigen::MatrixXf& mat, const STDesc& desc, int row) {
     mat.block<1, 3>(row, 15) = vertex_C.transpose();
 }
 
-void updateMatrixAndKDTree(Eigen::MatrixXf& mat, std::unique_ptr<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>>& index, std::deque<STDesc>& std_local_map) {
-   
+void updateMatrixAndKDTree(Eigen::MatrixXf& mat, std::unique_ptr<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>>& index, const std::deque<STDesc>& std_local_map) {
     int num_desc = std_local_map.size();
-    mat.conservativeResize(num_desc, 18);
+    mat.resize(num_desc, 18);
 
     // Rellenar la matriz con los descriptores actuales
     for (size_t i = 0; i < std_local_map.size(); ++i) {
@@ -243,9 +245,9 @@ void generateArrow(const STDesc& desc1, const STDesc& desc2, visualization_msgs:
     arrow.id = id++;
     arrow.type = visualization_msgs::Marker::ARROW;
     arrow.action = visualization_msgs::Marker::ADD;
-    arrow.scale.x = 0.025;  // Grosor del cuerpo de la flecha
-    arrow.scale.y = 0.1;  // Grosor de la cabeza de la flecha
-    arrow.scale.z = 0.2;   // Longitud de la cabeza de la flecha
+    arrow.scale.x = 0.05;  // Grosor del cuerpo de la flecha
+    arrow.scale.y = 0.2;  // Grosor de la cabeza de la flecha
+    arrow.scale.z = 0.4;   // Longitud de la cabeza de la flecha
     
     // Generar color aleatorio
     auto [r, g, b] = getRandomColor();
@@ -280,87 +282,62 @@ int main(int argc, char **argv) {
     read_parameters(nh, config_setting);
 
     ros::Publisher pubkeycurr = nh.advertise<visualization_msgs::MarkerArray>("std_curr", 10);
-    ros::Publisher pubkeyprev = nh.advertise<visualization_msgs::MarkerArray>("std_prev", 10);
-    
+    ros::Publisher pubkeyprev = nh.advertise<visualization_msgs::MarkerArray>("std_prev", 10);    
     ros::Publisher pub_curr_points = nh.advertise<sensor_msgs::PointCloud2>("std_curr_points", 10);
     ros::Publisher pub_prev_points = nh.advertise<sensor_msgs::PointCloud2>("std_prev_points", 10);
     ros::Publisher pubSTD = nh.advertise<visualization_msgs::MarkerArray>("pair_std", 10);
-
     ros::Publisher marker_pub_prev = nh.advertise<visualization_msgs::MarkerArray>("Axes_prev_STD", 10);
     ros::Publisher marker_pub_curr = nh.advertise<visualization_msgs::MarkerArray>("Axes_curr_STD", 10);
-
     ros::Publisher pose_pub_prev = nh.advertise<geometry_msgs::PoseArray>("std_prev_poses", 10);
     ros::Publisher pose_pub_curr = nh.advertise<geometry_msgs::PoseArray>("std_curr_poses", 10);
 
     ros::Subscriber subLaserCloud = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_points", 100, laserCloudHandler);
-
     ros::Subscriber subOdom = nh.subscribe<nav_msgs::Odometry>("/odom", 100, OdomHandler);
 
     STDescManager *std_manager = new STDescManager(config_setting);
     std::vector<STDesc> stds_curr;
     std::vector<STDesc> stds_prev;
 
-
-
     // matrix of the std_descrptor to std_descriptor
     using matrix_t = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic>;
     std::deque<STDesc> std_local_map;
+    std::deque<int> counts_per_iteration;
 
     Eigen::MatrixXf mat(0, 18);
     std::unique_ptr<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>> index;
-    //const int max_window_size = 1;
-    static std::deque<int> counts_per_iteration;
+    
     PointCloud::Ptr current_cloud_world(new PointCloud);
     PointCloud::Ptr current_cloud(new PointCloud);
     Eigen::Affine3d pose; // odometria 
+    Eigen::Affine3d pose_prev = Eigen::Affine3d::Identity(); // odometria 
+    int cont_itera = 0;
 
     while (ros::ok()) {
         ros::spinOnce();
         std::vector<STDesc> stds_curr_pair;
         std::vector<STDesc> stds_prev_pair;
 
-        if (syncPackages(current_cloud, pose)) {
-            pcl::transformPointCloud(*current_cloud, *current_cloud_world, pose);
-            // //Transformando la nube de puntos segun la pose obtenida
-            // //Extraer la matriz de rotación
-            // Eigen::Matrix3d rotation_matrix = pose.rotation();
+        if (syncPackages(current_cloud, pose)) {           
 
-            // // Convertir la matriz de rotación a un cuaternión
-            // Eigen::Quaterniond quaternion(rotation_matrix);
-
-            // // Extraer la traslación
-            // Eigen::Vector3d translation = pose.translation();
-
-            // // Imprimir la traslación
-            // std::cout << "Translation vector:" << std::endl;
-            // std::cout << translation << std::endl;
-
-            // // Imprimir el cuaternión
-            // std::cout << "Quaternion:" << std::endl;
-            // std::cout << "x: " << quaternion.x() << std::endl;
-            // std::cout << "y: " << quaternion.y() << std::endl;
-            // std::cout << "z: " << quaternion.z() << std::endl;
-            // std::cout << "w: " << quaternion.w() << std::endl;
-
-            // //////////////////////////////////////////////////
-            down_sampling_voxel(*current_cloud_world, config_setting.ds_size_);
-            down_sampling_voxel(*current_cloud, config_setting.ds_size_);
-                
             // step1. Descriptor Extraction
-            auto start = std::chrono::high_resolution_clock::now();
-            std_manager->GenerateSTDescs(current_cloud, stds_curr);
+            auto start = std::chrono::high_resolution_clock::now();                     
             
             int cont_desc_pairs = 0;
             if (init_std) {
                 init_std = false;
+                down_sampling_voxel(*current_cloud, config_setting.ds_size_);
+                std_manager->GenerateSTDescs(current_cloud, stds_curr);
                 stds_prev = stds_curr;
                 ROS_INFO("++++++++++ Iniciando Extraccion de STD ++++++++");
-            } else {
+            } else { 
+                  // //////////////////////////////////////////////////
 
-                // Actualizar la matriz y el KD-Tree con std_local_map
-                // Agregar descriptores actuales a std_local_map            
+                pcl::transformPointCloud(*current_cloud, *current_cloud_world, pose_prev);
+                pose_prev = pose;
+                down_sampling_voxel(*current_cloud_world, config_setting.ds_size_);
+                std_manager->GenerateSTDescs(current_cloud_world, stds_curr);
 
-                updateMatrixAndKDTree(mat, index, std_local_map);
+               
 
                 // Comparar stds_curr con std_local_map usando el KD-Tree actualizado
                 if (!stds_curr.empty()) {
@@ -399,7 +376,7 @@ int main(int argc, char **argv) {
                                 // std::cout << "ret_index[" << i << "]=" << ret_indexes[i]<< " out_dist_sqr=" << out_dists_sqr[i] << std::endl;
                                 // Llamar a generateArrow para crear la flecha entre descriptores
 
-                                generateArrow(desc, std_local_map[ret_indexes[i]], marker_array, id, msg_point->header );
+                                generateArrow(desc,std_local_map[ret_indexes[i]], marker_array, id, msg_point->header );
 
                                 stds_prev_pair.push_back(std_local_map[ret_indexes[i]]);
                                 stds_curr_pair.push_back(desc);
@@ -418,25 +395,29 @@ int main(int argc, char **argv) {
                     marker_array.markers.push_back(delete_marker_curr);
                     pubSTD.publish(marker_array);
                 }
+                
+                
+                
+                
+
+
             }
             std::cout<<"Pares encontrados: "<<cont_desc_pairs<<std::endl;
 
             // Añadir los nuevos descriptores de stds_curr a std_local_map
-            std_local_map.insert(std_local_map.end(), stds_prev.begin(), stds_prev.end());
-
-            // Añadir el conteo de descriptores añadidos en esta iteración
-            counts_per_iteration.push_back(stds_prev.size());
+            std_local_map.insert(std_local_map.end(), stds_curr.begin(), stds_curr.end());
+            counts_per_iteration.push_back(stds_curr.size());
 
             // Si el tamaño de counts_per_iteration excede max_window_size, eliminar los descriptores más antiguos
             while (counts_per_iteration.size() > config_setting.max_window_size_) {
                 int count_to_remove = counts_per_iteration.front();
                 counts_per_iteration.pop_front();
-
                 // Eliminar los descriptores más antiguos de std_local_map
                 for (int i = 0; i < count_to_remove; ++i) {
                     std_local_map.pop_front();
                 }
             }
+            updateMatrixAndKDTree(mat, index, std_local_map);
 
             auto end = std::chrono::high_resolution_clock::now();
             std::chrono::duration<double> elapsed = end - start;
@@ -451,55 +432,58 @@ int main(int argc, char **argv) {
           std_manager->publishPoses(pose_pub_curr, stds_curr_pair, msg_point->header);
 
 
-          /////////////////// Data visualization //////////////////////////////////////////////
+         /* ///////////////// Data visualization //////////////////////////////////////////////
 
-            // //// visualizacion de los keypoints current
-            // visualization_msgs::MarkerArray marker_array_curr;
-            // Eigen::Vector3f colorVector_curr(0.0f, 0.0f, 1.0f);  // azul
+            //// visualizacion de los keypoints current
+            visualization_msgs::MarkerArray marker_array_curr;
+            Eigen::Vector3f colorVector_curr(0.0f, 0.0f, 1.0f);  // azul
 
-            // convertToMarkers(stds_curr, marker_array_curr,colorVector_curr ,0.5 );
-            // pubkeycurr.publish(marker_array_curr);
-            //  visualization_msgs::Marker delete_marker_curr;
-            //  delete_marker_curr.action = visualization_msgs::Marker::DELETEALL;
-            //  marker_array_curr.markers.clear();  // Asegúrate de que el array de marcadores esté vacío
-            //  marker_array_curr.markers.push_back(delete_marker_curr);
-            // /pubkeycurr.publish(marker_array_curr);
-            // //////////////////////////////////////////
+            convertToMarkers(stds_curr, marker_array_curr,colorVector_curr ,0.5 );
+            pubkeycurr.publish(marker_array_curr);
+            visualization_msgs::Marker delete_marker_curr;
+            delete_marker_curr.action = visualization_msgs::Marker::DELETEALL;
+            marker_array_curr.markers.clear();  // Asegúrate de que el array de marcadores esté vacío
+            marker_array_curr.markers.push_back(delete_marker_curr);
+            pubkeycurr.publish(marker_array_curr);
+            //////////////////////////////////////////
 
-            // ////// publicacion de nube de puntos en los vertices de los stds
-            // pcl::PointCloud<pcl::PointXYZ>::Ptr std_points(new pcl::PointCloud<pcl::PointXYZ>);
-            // convertToPointCloud(stds_curr, std_points);
-            // sensor_msgs::PointCloud2 output_curr;
-            // pcl::toROSMsg(*std_points, output_curr);
-            // output_curr.header.frame_id = "velodyne";
-            // pub_curr_points.publish(output_curr);
-            // //////////////////////////////////////////
+            ////// publicacion de nube de puntos en los vertices de los stds
+            pcl::PointCloud<pcl::PointXYZ>::Ptr std_points(new pcl::PointCloud<pcl::PointXYZ>);
+            convertToPointCloud(stds_curr, std_points);
+            sensor_msgs::PointCloud2 output_curr;
+            pcl::toROSMsg(*std_points, output_curr);
+            output_curr.header.frame_id = "velodyne";
+            pub_curr_points.publish(output_curr);
+            //////////////////////////////////////////
 
-            // ///////////////////// Previous std
-            // ////// visualizacion de los keypoints prev
-            // visualization_msgs::MarkerArray marker_array_prev;
-            // Eigen::Vector3f colorVector_prev(1.0f, 0.0f, 0.0f);  // rojo
-            // convertToMarkers(stds_prev, marker_array_prev,colorVector_prev ,0.5 );
-            // pubkeyprev.publish(marker_array_prev);
-            // visualization_msgs::Marker delete_marker_prev;
-            // delete_marker_prev.action = visualization_msgs::Marker::DELETEALL;
-            // marker_array_prev.markers.clear();  // Asegúrate de que el array de marcadores esté vacío
-            // marker_array_prev.markers.push_back(delete_marker_prev);
-            // pubkeyprev.publish(marker_array_prev);
-            // //////////////////////////////////////////
+            ///////////////////// Previous std
+            ////// visualizacion de los keypoints prev
+            visualization_msgs::MarkerArray marker_array_prev;
+            Eigen::Vector3f colorVector_prev(1.0f, 0.0f, 0.0f);  // rojo
+            convertToMarkers(stds_prev, marker_array_prev,colorVector_prev ,0.5 );
+            pubkeyprev.publish(marker_array_prev);
+            visualization_msgs::Marker delete_marker_prev;
+            delete_marker_prev.action = visualization_msgs::Marker::DELETEALL;
+            marker_array_prev.markers.clear();  // Asegúrate de que el array de marcadores esté vacío
+            marker_array_prev.markers.push_back(delete_marker_prev);
+            pubkeyprev.publish(marker_array_prev);
+            //////////////////////////////////////////
 
-            // ////// publicacion de nube de puntos en los vertices de los stds
-            // pcl::PointCloud<pcl::PointXYZ>::Ptr std_points_prev(new pcl::PointCloud<pcl::PointXYZ>);
-            // convertToPointCloud(stds_prev, std_points_prev);
-            // sensor_msgs::PointCloud2 output_prev;
-            // pcl::toROSMsg(*std_points_prev, output_prev);
-            // output_prev.header.frame_id = "velodyne";
-            // pub_prev_points.publish(output_prev);
-            // //////////////////////////////////////////
+            ////// publicacion de nube de puntos en los vertices de los stds
+            pcl::PointCloud<pcl::PointXYZ>::Ptr std_points_prev(new pcl::PointCloud<pcl::PointXYZ>);
+            convertToPointCloud(stds_prev, std_points_prev);
+            sensor_msgs::PointCloud2 output_prev;
+            pcl::toROSMsg(*std_points_prev, output_prev);
+            output_prev.header.frame_id = "velodyne";
+            pub_prev_points.publish(output_prev);
+            //////////////////////////////////////////*/
 
-            //////////////////////////////////////////////////////////////////////////////////////////////////
+            
+            ////////////////////////////////////////////////////////////////////////////////////////////////
             // Actualizar stds_prev
             stds_prev = stds_curr;
+            std::cout<<"Iteracion: "<<cont_itera++<<std::endl;
+            
         }
     }
 
