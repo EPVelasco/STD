@@ -106,7 +106,7 @@ typedef struct STDesc {
     return axes;
   }
 
-  // Convert the descriptor to a flat vector (for nanoflann example)
+  // Convert the descriptor to a flat vector
     std::vector<double> toVector() const {
         std::vector<double> vec(15);
         vec[0] = side_length_[0]; vec[1] = side_length_[1]; vec[2] = side_length_[2];

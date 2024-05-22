@@ -1,3 +1,7 @@
+#include <nanoflann.hpp>
+#include <deque>
+#include <Eigen/Dense>
+
 #include <Eigen/Geometry>
 #include <mutex>
 #include <queue>
@@ -201,24 +205,29 @@ void printVector(const std::vector<T>& vec) {
 }
 
 void addDescriptorToMatrix(Eigen::MatrixXf& mat, const STDesc& desc, int row) {
+
+    // la matriz tiene 27 elementos
     Eigen::Vector3f side_length = desc.side_length_.cast<float>();
     Eigen::Vector3f angle = desc.angle_.cast<float>();
     Eigen::Vector3f center = desc.center_.cast<float>();
     Eigen::Vector3f vertex_A = desc.vertex_A_.cast<float>();
     Eigen::Vector3f vertex_B = desc.vertex_B_.cast<float>();
     Eigen::Vector3f vertex_C = desc.vertex_C_.cast<float>();
-
+    Eigen::Matrix3d axes = desc.calculateReferenceFrame();
+    Eigen::Matrix<float, 9, 1> axes_vec;
+    axes_vec << axes(0),axes(1),axes(2),axes(3),axes(4),axes(5),axes(6),axes(7),axes(8);
     mat.block<1, 3>(row, 0) = side_length.transpose();
     mat.block<1, 3>(row, 3) = angle.transpose();
     mat.block<1, 3>(row, 6) = center.transpose();
     mat.block<1, 3>(row, 9) = vertex_A.transpose();
     mat.block<1, 3>(row, 12) = vertex_B.transpose();
     mat.block<1, 3>(row, 15) = vertex_C.transpose();
+    mat.block<1, 9>(row, 18) = axes_vec.transpose();
 }
 
 void updateMatrixAndKDTree(Eigen::MatrixXf& mat, std::unique_ptr<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>>& index, const std::deque<STDesc>& std_local_map) {
     int num_desc = std_local_map.size();
-    mat.resize(num_desc, 18);
+    mat.resize(num_desc, 27);
 
     // Rellenar la matriz con los descriptores actuales
     for (size_t i = 0; i < std_local_map.size(); ++i) {
@@ -226,7 +235,7 @@ void updateMatrixAndKDTree(Eigen::MatrixXf& mat, std::unique_ptr<nanoflann::KDTr
     }
 
     // Recrear el KD-Tree con la matriz actualizada
-    index = std::make_unique<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>>(18, std::cref(mat), 10 /* max leaf */);
+    index = std::make_unique<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>>(27, std::cref(mat), 10 /* max leaf */);
     index->index_->buildIndex();
 }
 
@@ -274,6 +283,130 @@ void generateArrow(const STDesc& desc1, const STDesc& desc2, visualization_msgs:
     marker_array.markers.push_back(arrow);
 }
 
+// DBSCAN parameters
+const double EPSILON = 100.0; // Radio de búsqueda
+const int MIN_POINTS = 1; // Mínimo número de puntos para formar un cluster
+
+void DBSCAN(const Eigen::MatrixXf &data, std::vector<int> &labels) {
+    using namespace nanoflann;
+    const int num_points = data.rows();
+    const int dim = data.cols();
+
+    labels.assign(num_points, -1); // Inicializar etiquetas a -1 (no visitado)
+
+    typedef KDTreeEigenMatrixAdaptor<Eigen::MatrixXf> KDTree;
+    KDTree kdtree(dim, std::cref(data), 10 /* max leaf */);
+    kdtree.index_->buildIndex();
+
+    int cluster_id = 0;
+
+    for (int i = 0; i < num_points; ++i) {
+        if (labels[i] != -1) continue; // Ya visitado
+
+        // Buscar vecinos dentro de EPSILON
+        nanoflann::SearchParameters params;
+        std::vector<nanoflann::ResultItem<long int, float>> ret_matches;
+
+        const size_t nMatches = kdtree.index_->radiusSearch(data.row(i).data(), EPSILON * EPSILON, ret_matches, params);
+        //std::cout << "Punto " << i << " tiene " << nMatches << " vecinos dentro del radio " << EPSILON << std::endl;
+
+
+        //std::cout << "nMatches: " << nMatches;
+
+        if (nMatches < MIN_POINTS) {
+            labels[i] = -2; // Ruido
+            continue;
+        }
+
+        // Asignar un nuevo ID de cluster
+        labels[i] = cluster_id;
+        std::deque<size_t> seeds;
+        for (const auto& match : ret_matches) {
+            seeds.push_back(match.first);
+        }
+
+        while (!seeds.empty()) {
+            const int curr_point = seeds.front();
+            seeds.pop_front();
+
+            if (labels[curr_point] == -2) {
+                labels[curr_point] = cluster_id; // Cambiar de ruido a borde
+            }
+
+            if (labels[curr_point] != -1) continue; // Ya procesado
+
+            labels[curr_point] = cluster_id;
+
+            ret_matches.clear();
+            const size_t nMatchesInner = kdtree.index_->radiusSearch(data.row(curr_point).data(), EPSILON * EPSILON, ret_matches, params);
+
+            if (nMatchesInner >= MIN_POINTS) {
+                for (const auto& match : ret_matches) {
+                    seeds.push_back(match.first);
+                }
+            }
+        }
+
+        ++cluster_id;
+    }
+    std::cout<<"Clusters: "<<cluster_id<<std::endl;
+}
+
+void updateMatrixAndKDTreeWithFiltering(Eigen::MatrixXf& mat, std::unique_ptr<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>>& index, std::deque<STDesc>& std_local_map) {
+    // Convertir std_local_map a una matriz Eigen
+    std::cout << "Tamaño de std_local_map: " << std_local_map.size() << std::endl;
+
+    std::cout << "Tamaño de  a mat: " << mat.size() << std::endl;
+
+    int num_desc = std_local_map.size();
+    mat.resize(num_desc, 27);
+
+    for (size_t i = 0; i < std_local_map.size(); ++i) {
+        addDescriptorToMatrix(mat, std_local_map[i], i);
+    }
+    std::cout << "Tamaño de std_local_map a mat: " << mat.size() << std::endl;
+
+    // Aplicar DBSCAN
+    std::vector<int> labels;
+    DBSCAN(mat, labels);
+
+    std::cout << "Labels: " << labels.size() << std::endl;
+
+
+    // Filtrar std_local_map según los clusters identificados
+    std::deque<STDesc> filtered_std_local_map;
+
+    // Busco el maximo de labels, si es diferente de -2 es que hubo asociacion de datos si no no
+    int max_label = *std::max_element(labels.begin(), labels.end());
+    if(max_label<0){
+        filtered_std_local_map = std_local_map;
+    }
+    else{
+        for (int i = 0; i < labels.size(); ++i) {
+            if (labels[i] >= 0) { // Si el descriptor no es ruido
+                filtered_std_local_map.push_back(std_local_map[i]);
+            }
+        }
+    }
+
+    // Actualizar std_local_map con los descriptores filtrados
+    std_local_map = std::move(filtered_std_local_map);
+
+    // Actualizar la matriz y el KD-Tree con los descriptores filtrados
+    num_desc = std_local_map.size();
+    mat.resize(num_desc, 27);
+
+    for (size_t i = 0; i < std_local_map.size(); ++i) {
+        addDescriptorToMatrix(mat, std_local_map[i], i);
+    }
+
+    std::cout << "mat: " << mat.size() << std::endl;
+
+    // Recrear el KD-Tree con la matriz actualizada
+    index = std::make_unique<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>>(27, std::cref(mat), 10 /* max leaf */);
+    index->index_->buildIndex();
+}
+
 int main(int argc, char **argv) {
     ros::init(argc, argv, "STD_descriptor");
     ros::NodeHandle nh;
@@ -297,53 +430,52 @@ int main(int argc, char **argv) {
     STDescManager *std_manager = new STDescManager(config_setting);
     std::vector<STDesc> stds_curr;
     std::vector<STDesc> stds_prev;
+    
 
-    // matrix of the std_descrptor to std_descriptor
     using matrix_t = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic>;
     std::deque<STDesc> std_local_map;
     std::deque<int> counts_per_iteration;
 
-    Eigen::MatrixXf mat(0, 18);
+    Eigen::MatrixXf mat(0, 27);
     std::unique_ptr<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>> index;
-    
+
     PointCloud::Ptr current_cloud_world(new PointCloud);
     PointCloud::Ptr current_cloud(new PointCloud);
-    Eigen::Affine3d pose; // odometria 
-    Eigen::Affine3d pose_prev = Eigen::Affine3d::Identity(); // odometria 
+    Eigen::Affine3d pose;
+    Eigen::Affine3d pose_iden = Eigen::Affine3d::Identity();
+    std::deque<Eigen::Affine3d> pose_vec;
     int cont_itera = 0;
 
     while (ros::ok()) {
         ros::spinOnce();
         std::vector<STDesc> stds_curr_pair;
         std::vector<STDesc> stds_prev_pair;
+        std::vector<STDesc> stds_map; 
 
         if (syncPackages(current_cloud, pose)) {           
-
-            // step1. Descriptor Extraction
-            auto start = std::chrono::high_resolution_clock::now();                     
+            pose_vec.push_back(pose);
+            auto start = std::chrono::high_resolution_clock::now();       
+            down_sampling_voxel(*current_cloud, config_setting.ds_size_);              
             
             int cont_desc_pairs = 0;
             if (init_std) {
                 init_std = false;
-                down_sampling_voxel(*current_cloud, config_setting.ds_size_);
+                
                 std_manager->GenerateSTDescs(current_cloud, stds_curr);
                 stds_prev = stds_curr;
+                stds_map = stds_curr;
                 ROS_INFO("++++++++++ Iniciando Extraccion de STD ++++++++");
             } else { 
-                  // //////////////////////////////////////////////////
-
-                pcl::transformPointCloud(*current_cloud, *current_cloud_world, pose_prev);
-                // std::cout << "Transformación de la nube de puntos completada" << std::endl;
-                // std::cout << "Pose actual: " << pose.matrix() << std::endl;
-                // std::cout << "Pose previa: " << pose_prev.matrix() << std::endl;
-                pose_prev = pose;
-                down_sampling_voxel(*current_cloud_world, config_setting.ds_size_);
+                
+            //    if (pose_vec.size()>0)                
+            //        pcl::transformPointCloud(*current_cloud, *current_cloud_world, pose_vec[pose_vec.size()-1]);  
+            //    else{
+            //        pcl::transformPointCloud(*current_cloud, *current_cloud_world, pose_iden);  
+            //    }      
+               
                 std_manager->GenerateSTDescs(current_cloud, stds_curr);
 
-               
-
-                // Comparar stds_curr con std_local_map usando el KD-Tree actualizado
-                if (!stds_curr.empty()) {
+                if (!stds_prev.empty()) {
                     visualization_msgs::MarkerArray marker_array;
                     int id = 0;
  
@@ -355,6 +487,7 @@ int main(int argc, char **argv) {
                         Eigen::Vector3f vertex_A = desc.vertex_A_.cast<float>();
                         Eigen::Vector3f vertex_B = desc.vertex_B_.cast<float>();
                         Eigen::Vector3f vertex_C = desc.vertex_C_.cast<float>();
+                        Eigen::Matrix3d axes_f = desc.calculateReferenceFrame();
 
                         query.insert(query.end(), side_length.data(), side_length.data() + 3);
                         query.insert(query.end(), angle.data(), angle.data() + 3);
@@ -362,6 +495,7 @@ int main(int argc, char **argv) {
                         query.insert(query.end(), vertex_A.data(), vertex_A.data() + 3);
                         query.insert(query.end(), vertex_B.data(), vertex_B.data() + 3);
                         query.insert(query.end(), vertex_C.data(), vertex_C.data() + 3);
+                        query.insert(query.end(), axes_f.data(), axes_f.data() + axes_f.size());
 
                         // Buscar el descriptor más cercano
                         const size_t num_results = 1;
@@ -376,17 +510,15 @@ int main(int argc, char **argv) {
                            
                             if (ret_indexes[i] < std_local_map.size() && out_dists_sqr[i] < config_setting.kdtree_threshold_) {
                                 cont_desc_pairs++;
-                                // std::cout << "ret_index[" << i << "]=" << ret_indexes[i]<< " out_dist_sqr=" << out_dists_sqr[i] << std::endl;
-                                // Llamar a generateArrow para crear la flecha entre descriptores
-
-                                generateArrow(desc,std_local_map[ret_indexes[i]], marker_array, id, msg_point->header );
+                                generateArrow(desc, std_local_map[ret_indexes[i]], marker_array, id, msg_point->header);
 
                                 stds_prev_pair.push_back(std_local_map[ret_indexes[i]]);
                                 stds_curr_pair.push_back(desc);
                             }
-                            //else {
-                            //     std::cerr << "Error: ret_indexes[" << i << "] está fuera de los límites de std_local_map." << std::endl;
-                            // }
+                            else{
+                                // elementos que no tuvieron match para ser añadidos a std_map para hacer el mapa robusto:
+                                stds_map.push_back(desc);
+                            }
                         }
                     }
 
@@ -394,40 +526,51 @@ int main(int argc, char **argv) {
                     pubSTD.publish(marker_array);
                     visualization_msgs::Marker delete_marker_curr;
                     delete_marker_curr.action = visualization_msgs::Marker::DELETEALL;
-                    marker_array.markers.clear();  // Asegúrate de que el array de marcadores esté vacío
+                    marker_array.markers.clear();
                     marker_array.markers.push_back(delete_marker_curr);
                     pubSTD.publish(marker_array);
                 }
-                
-
             }
-            std::cout<<"Pares encontrados: "<<cont_desc_pairs<<std::endl;
+
+            std::cout << "Pares encontrados: " << cont_desc_pairs << std::endl;
+
+            std::cout << "Tamaño de std_local_map1 : " << std_local_map.size() << std::endl;
+            std::cout << "Tamaño de stds_curr : " << stds_curr.size() << std::endl;
 
             // Añadir los nuevos descriptores de stds_curr a std_local_map
             std_local_map.insert(std_local_map.end(), stds_curr.begin(), stds_curr.end());
             counts_per_iteration.push_back(stds_curr.size());
 
+            std::cout << "Tamaño de std_local_map2 : " << std_local_map.size() << std::endl;
+
             while (counts_per_iteration.size() > config_setting.max_window_size_) {
+                std::cout << "counts_per_iteration: " << counts_per_iteration.size() <<std::endl;
                 int count_to_remove = counts_per_iteration.front();
+                 std::cout << "count_to_remove: " << count_to_remove <<std::endl;
                 counts_per_iteration.pop_front();
                 for (int i = 0; i < count_to_remove; ++i) {
+               // for (int i = 0; i < std_local_map.size()/2; ++i) {    
                     std_local_map.pop_front();
+                    
                 }
             }
+
+            std::cout << "Tamaño de std_local_map3: " << std_local_map.size() << std::endl;
+            
+
+            // Actualizar la matriz y el KD-Tree con filtrado DBSCAN
+            //updateMatrixAndKDTreeWithFiltering(mat, index, std_local_map);
             updateMatrixAndKDTree(mat, index, std_local_map);
 
             auto end = std::chrono::high_resolution_clock::now();
             std::chrono::duration<double> elapsed = end - start;
 
-            ROS_INFO("Extracted %lu ST", stds_curr.size());
-            ROS_INFO("Extracted %lu ST descriptors in %f seconds", stds_prev.size(), elapsed.count());
-            std::cout << "Tamaño de std_local_map: " << std_local_map.size() << std::endl;
+            //ROS_INFO("Extracted %lu ST", stds_curr.size());
+            ROS_INFO("Extracted %lu ST descriptors in %f seconds", stds_curr.size(), elapsed.count());
+            
 
-          //std_manager->publishAxes(marker_pub_prev, stds_prev_pair, msg_point->header);
-          //std_manager->publishAxes(marker_pub_curr, stds_curr_pair, msg_point->header);
-
-          std_manager->publishPoses(pose_pub_prev, stds_prev_pair, msg_point->header);
-          std_manager->publishPoses(pose_pub_curr, stds_curr_pair, msg_point->header);
+            std_manager->publishPoses(pose_pub_prev, stds_prev_pair, msg_point->header);
+            std_manager->publishPoses(pose_pub_curr, stds_curr_pair, msg_point->header);
 
 
          /* ///////////////// Data visualization //////////////////////////////////////////////
