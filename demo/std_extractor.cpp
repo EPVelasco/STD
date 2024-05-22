@@ -426,6 +426,8 @@ int main(int argc, char **argv) {
 
     ros::Subscriber subLaserCloud = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_points", 100, laserCloudHandler);
     ros::Subscriber subOdom = nh.subscribe<nav_msgs::Odometry>("/odom", 100, OdomHandler);
+    ros::Publisher cloud_pub = nh.advertise<sensor_msgs::PointCloud2>("output_cloud", 1);
+
 
     STDescManager *std_manager = new STDescManager(config_setting);
     std::vector<STDesc> stds_curr;
@@ -472,8 +474,15 @@ int main(int argc, char **argv) {
             //    else{
             //        pcl::transformPointCloud(*current_cloud, *current_cloud_world, pose_iden);  
             //    }      
-               
-                std_manager->GenerateSTDescs(current_cloud, stds_curr);
+                pcl::transformPointCloud(*current_cloud, *current_cloud_world, pose);
+                std_manager->GenerateSTDescs(current_cloud_world, stds_curr);
+
+                sensor_msgs::PointCloud2 output_cloud;
+                pcl::toROSMsg(*current_cloud_world, output_cloud);
+                output_cloud.header.frame_id = "velodyne";  // O el frame_id que desees
+                cloud_pub.publish(output_cloud);
+
+
 
                 if (!stds_prev.empty()) {
                     visualization_msgs::MarkerArray marker_array;
