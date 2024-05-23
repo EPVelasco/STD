@@ -193,7 +193,7 @@ void publish_std_pairs(
   m_line.scale.x = 0.25;
   m_line.pose.orientation.w = 1.0;
   //m_line.header.frame_id = "camera_init";
-  m_line.header.frame_id = "velodyne";
+  m_line.header.frame_id = "map";
   m_line.id = 0;
   int max_pub_cnt = 1;
   for (auto var : match_std_pairs) {
@@ -552,7 +552,7 @@ void STDescManager::publishAxes(const ros::Publisher& marker_pub, const std::vec
 
 void STDescManager::publishPoses(const ros::Publisher& pose_pub, const std::vector<STDesc>& descs, const std_msgs::Header& header) {
     geometry_msgs::PoseArray pose_array;
-    pose_array.header = header;
+    pose_array.header.frame_id = "map";
 
     // Iterar sobre cada descriptor en el vector
     for (const auto& desc : descs) {

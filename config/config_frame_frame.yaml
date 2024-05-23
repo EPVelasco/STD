@@ -1,6 +1,16 @@
 # pre process
 ds_size: 0.2
-maximum_corner_num: 50
+maximum_corner_num: 5
+
+# # Original key points
+# plane_detection_thre: 0.01
+# plane_merge_normal_thre: 0.2
+# voxel_size: 2.0
+# voxel_init_num: 10
+# proj_image_resolution: 0.5
+# proj_dis_min: 0
+# proj_dis_max: 5
+# corner_thre: 10
 
 # key points
 plane_detection_thre: 0.01
@@ -15,13 +25,21 @@ corner_thre: 10
 # std descriptor
 descriptor_near_num: 20
 descriptor_min_len: 2
-descriptor_max_len: 100
-non_max_suppression_radius: 2
-std_side_resolution: 0.15
+descriptor_max_len: 500
+non_max_suppression_radius: 5.0
+std_side_resolution: 0.5
+
+
+# # original std descriptor
+# descriptor_near_num: 10
+# descriptor_min_len: 2
+# descriptor_max_len: 50
+# non_max_suppression_radius: 2
+# std_side_resolution: 0.2
 
 # candidate search
-skip_near_num: 10
-candidate_num: 10
+skip_near_num: 5
+candidate_num: 5
 sub_frame_num: 1
 vertex_diff_threshold: 0.5
 rough_dis_threshold: 0.01
@@ -30,8 +48,8 @@ dis_threshold: 0.5
 icp_threshold: 0.4
 
 # window size
-max_window_size: 10
-kdtree_threshold: 20
+max_window_size: 100
+kdtree_threshold: 10
 # # candidate search
 # skip_near_num: 20
 # candidate_num: 20
