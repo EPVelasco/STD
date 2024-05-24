@@ -553,6 +553,7 @@ void STDescManager::publishAxes(const ros::Publisher& marker_pub, const std::vec
 void STDescManager::publishPoses(const ros::Publisher& pose_pub, const std::vector<STDesc>& descs, const std_msgs::Header& header) {
     geometry_msgs::PoseArray pose_array;
     pose_array.header.frame_id = "map";
+    pose_array.header.stamp= header.stamp;
 
     // Iterar sobre cada descriptor en el vector
     for (const auto& desc : descs) {

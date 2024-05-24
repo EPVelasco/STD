@@ -482,6 +482,7 @@ int main(int argc, char **argv) {
                 init_std = false;
                 
                 std_manager->GenerateSTDescs(current_cloud, stds_curr);
+                *current_cloud_world = *current_cloud;
                 stds_prev = stds_curr;
                 stds_map = stds_curr;
                  
@@ -494,16 +495,11 @@ int main(int argc, char **argv) {
             //        pcl::transformPointCloud(*current_cloud, *current_cloud_world, pose_iden);  
             //    }      
 
-                Eigen::Affine3d pose_diff = (pose_prev.inverse() * pose);
+                // Eigen::Affine3d pose_diff = (pose_prev.inverse() * pose);
 
-                pcl::transformPointCloud(*current_cloud, *current_cloud_world, pose_prev);
-                pcl::transformPointCloud(*current_cloud, *current_cloud_diff, pose_diff);
+                pcl::transformPointCloud(*current_cloud, *current_cloud_world, pose);
+                // pcl::transformPointCloud(*current_cloud, *current_cloud_diff, pose_diff);
                 std_manager->GenerateSTDescs(current_cloud_world, stds_curr);
-
-                sensor_msgs::PointCloud2 output_cloud;
-                pcl::toROSMsg(*current_cloud_world, output_cloud);
-                output_cloud.header.frame_id = "map";  // O el frame_id que desees
-                cloud_pub.publish(output_cloud);
 
 
                 if (!stds_prev.empty()) {
@@ -567,7 +563,12 @@ int main(int argc, char **argv) {
             // sensor_msgs::PointCloud2 output_cloud;
             // pcl::toROSMsg(*current_cloud_world_prev, output_cloud);
             // output_cloud.header.frame_id = "velodyne";  // O el frame_id que desees
-            // cloud_pub_prev.publish(output_cloud);
+            // cloud_pub_prev.publish(output_cloud);}
+
+            sensor_msgs::PointCloud2 output_cloud;
+            pcl::toROSMsg(*current_cloud_world, output_cloud);
+            output_cloud.header.frame_id = "map";  // O el frame_id que desees
+            cloud_pub.publish(output_cloud);
             
 
 
@@ -620,7 +621,7 @@ int main(int argc, char **argv) {
 
             /////////////// plot stds_map
             visualization_msgs::MarkerArray marker_array_map;
-            Eigen::Vector3f colorVector_map(0.0f, 0.0f, 0.0f);  // amarillo
+            Eigen::Vector3f colorVector_map(0.0f, 0.0f, 0.0f);  // negro
             publishLocalMap(std_local_map, marker_array_map,colorVector_map ,0.2);
             pubkeymap.publish(marker_array_map);
             // visualization_msgs::Marker delete_marker_map;
@@ -633,16 +634,15 @@ int main(int argc, char **argv) {
             
             ////////////////////////////////////////////////////////////////////////////////////////////////
 
-            std::cout << "Pares encontrados: " << cont_desc_pairs << std::endl;
-
-            std::cout << "Tamaño de std_local_map1 : " << std_local_map.size() << std::endl;
-            std::cout << "Tamaño de stds_curr : " << stds_curr.size() << std::endl;
+             std::cout << "Pares encontrados: " << cont_desc_pairs << std::endl;
+            // std::cout << "Tamaño de std_local_map1 : " << std_local_map.size() << std::endl;
+            // std::cout << "Tamaño de stds_curr : " << stds_curr.size() << std::endl;
 
             // Añadir los nuevos descriptores de stds_curr a std_local_map
-            std_local_map.insert(std_local_map.end(), stds_prev.begin(), stds_prev.end());
-            counts_per_iteration.push_back(stds_prev.size());
+            std_local_map.insert(std_local_map.end(), stds_curr.begin(), stds_curr.end());
+            counts_per_iteration.push_back(stds_curr.size());
 
-            std::cout << "Tamaño de std_local_map2 : " << std_local_map.size() << std::endl;
+            // std::cout << "Tamaño de std_local_map2 : " << std_local_map.size() << std::endl;
 
             while (counts_per_iteration.size() > config_setting.max_window_size_) {
                 std::cout << "counts_per_iteration: " << counts_per_iteration.size() <<std::endl;
