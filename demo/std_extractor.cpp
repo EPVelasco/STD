@@ -163,6 +163,45 @@ void convertToMarkers(const std::vector<STDesc>& stds, visualization_msgs::Marke
     }
 }
 
+void MAPconvertToMarkers(const Eigen::MatrixXf& data, visualization_msgs::MarkerArray& marker_array, const Eigen::Vector3f& color, float alpha = 1.0, float scale = 0.03) {
+    int id = 0;
+
+    for (int i = 0; i < data.rows(); ++i) {
+        visualization_msgs::Marker marker;
+        marker.header.frame_id = "map";
+        marker.header.stamp = ros::Time::now();
+        marker.ns = "std_descriptors";
+        marker.id = id++;
+        marker.type = visualization_msgs::Marker::LINE_LIST;
+        marker.action = visualization_msgs::Marker::ADD;
+        marker.scale.x = scale;
+        marker.color.r = color(0);  
+        marker.color.g = color(1);  
+        marker.color.b = color(2);  
+        marker.color.a = alpha;     
+
+        geometry_msgs::Point p1, p2, p3;
+        p1.x = data(i,9);
+        p1.y = data(i,10);
+        p1.z = data(i,11);
+        p2.x = data(i,12);
+        p2.y = data(i,13);
+        p2.z = data(i,14);
+        p3.x = data(i,15);
+        p3.y = data(i,16);
+        p3.z = data(i,17);
+
+        marker.points.push_back(p1);
+        marker.points.push_back(p2);
+        marker.points.push_back(p2);
+        marker.points.push_back(p3);
+        marker.points.push_back(p3);
+        marker.points.push_back(p1);
+
+        marker_array.markers.push_back(marker);
+    }
+}
+
 void convertToPointCloud(const std::vector<STDesc>& stds, pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud) {
     for (const auto& std : stds) {
         pcl::PointXYZ p1, p2, p3;
@@ -175,6 +214,29 @@ void convertToPointCloud(const std::vector<STDesc>& stds, pcl::PointCloud<pcl::P
         p3.x = std.vertex_C_(0);
         p3.y = std.vertex_C_(1);
         p3.z = std.vertex_C_(2);
+
+        cloud->points.push_back(p1);
+        cloud->points.push_back(p2);
+        cloud->points.push_back(p3);
+    }
+}
+
+void MAPconvertToPointCloud(const Eigen::MatrixXf& data, pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud) {
+    for (int i = 0; i < data.rows(); ++i) {
+        pcl::PointXYZ p1, p2, p3;
+
+        // Asumiendo que los vertices estan en las posiciones 9-17
+        p1.x = data(i, 9);
+        p1.y = data(i, 10);
+        p1.z = data(i, 11);
+        
+        p2.x = data(i, 12);
+        p2.y = data(i, 13);
+        p2.z = data(i, 14);
+
+        p3.x = data(i, 15);
+        p3.y = data(i, 16);
+        p3.z = data(i, 17);
 
         cloud->points.push_back(p1);
         cloud->points.push_back(p2);
@@ -298,12 +360,20 @@ void generateArrow(const STDesc& desc1, const STDesc& desc2, visualization_msgs:
 }
 
 // DBSCAN parameters
-const double EPSILON = 100.0; // Radio de búsqueda
+//const double EPSILON = 10.0; // Radio de búsqueda
 const int MIN_POINTS = 1; // Mínimo número de puntos para formar un cluster
 
-void DBSCAN(const Eigen::MatrixXf &data, std::vector<int> &labels) {
+void DBSCAN(const Eigen::MatrixXf &data, std::vector<int> &labels, const double EPSILON) {
     using namespace nanoflann;
     const int num_points = data.rows();
+
+    // // Utilizar los vértices de los std para filtrar el mapa (están en la posición 6-8 y 18-26)
+    // Eigen::MatrixXf data_vertex(num_points, 12); // 3 columnas para el centro y 9 para los axes
+
+    // // Copiar los datos correspondientes
+    // data_vertex << data.block(0, 6, num_points, 3),   // Datos del centro del triángulo (columnas 6-8)
+    //                data.block(0, 18, num_points, 9);  // Datos de los axes del triángulo (columnas 18-26)
+
     const int dim = data.cols();
 
     labels.assign(num_points, -1); // Inicializar etiquetas a -1 (no visitado)
@@ -322,22 +392,24 @@ void DBSCAN(const Eigen::MatrixXf &data, std::vector<int> &labels) {
         std::vector<nanoflann::ResultItem<long int, float>> ret_matches;
 
         const size_t nMatches = kdtree.index_->radiusSearch(data.row(i).data(), EPSILON * EPSILON, ret_matches, params);
-        //std::cout << "Punto " << i << " tiene " << nMatches << " vecinos dentro del radio " << EPSILON << std::endl;
+        std::cout << "Punto " << i << " tiene " << nMatches << " vecinos dentro del radio " << EPSILON << std::endl;
 
+        // Filtrar el punto actual de los vecinos
+        std::vector<size_t> valid_neighbors;
+        for (const auto& match : ret_matches) {
+            if (match.first != i) {
+                valid_neighbors.push_back(match.first);
+            }
+        }
 
-        //std::cout << "nMatches: " << nMatches;
-
-        if (nMatches < MIN_POINTS) {
+        if (valid_neighbors.size() < MIN_POINTS) {
             labels[i] = -2; // Ruido
             continue;
         }
 
         // Asignar un nuevo ID de cluster
         labels[i] = cluster_id;
-        std::deque<size_t> seeds;
-        for (const auto& match : ret_matches) {
-            seeds.push_back(match.first);
-        }
+        std::deque<size_t> seeds(valid_neighbors.begin(), valid_neighbors.end());
 
         while (!seeds.empty()) {
             const int curr_point = seeds.front();
@@ -354,23 +426,33 @@ void DBSCAN(const Eigen::MatrixXf &data, std::vector<int> &labels) {
             ret_matches.clear();
             const size_t nMatchesInner = kdtree.index_->radiusSearch(data.row(curr_point).data(), EPSILON * EPSILON, ret_matches, params);
 
-            if (nMatchesInner >= MIN_POINTS) {
-                for (const auto& match : ret_matches) {
-                    seeds.push_back(match.first);
+            std::vector<size_t> valid_neighbors_inner;
+            for (const auto& match : ret_matches) {
+                if (match.first != curr_point) {
+                    valid_neighbors_inner.push_back(match.first);
+                }
+            }
+
+            if (valid_neighbors_inner.size() >= MIN_POINTS) {
+                for (const auto& match : valid_neighbors_inner) {
+                    seeds.push_back(match);
                 }
             }
         }
 
         ++cluster_id;
     }
-    std::cout<<"Clusters: "<<cluster_id<<std::endl;
+
+    std::cout << "Clusters: " << cluster_id << std::endl;
+    for (const auto& label_str : labels) {
+        if (label_str != -2)
+            std::cout << "label_str: " << label_str << std::endl;
+    }
 }
 
-void updateMatrixAndKDTreeWithFiltering(Eigen::MatrixXf& mat, std::unique_ptr<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>>& index, std::deque<STDesc>& std_local_map) {
-    // Convertir std_local_map a una matriz Eigen
+void updateMatrixAndKDTreeWithFiltering(Eigen::MatrixXf& mat, std::unique_ptr<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>>& index, std::deque<STDesc>& std_local_map, const double epsilon) {
     std::cout << "Tamaño de std_local_map: " << std_local_map.size() << std::endl;
-
-    std::cout << "Tamaño de  a mat: " << mat.size() << std::endl;
+    std::cout << "Tamaño de  a mat: " << mat.size()/27 << std::endl;
 
     int num_desc = std_local_map.size();
     mat.resize(num_desc, 27);
@@ -378,35 +460,55 @@ void updateMatrixAndKDTreeWithFiltering(Eigen::MatrixXf& mat, std::unique_ptr<na
     for (size_t i = 0; i < std_local_map.size(); ++i) {
         addDescriptorToMatrix(mat, std_local_map[i], i);
     }
-    std::cout << "Tamaño de std_local_map a mat: " << mat.size() << std::endl;
+    std::cout << "Tamaño de std_local_map a mat: " << mat.size()/27 << std::endl;
 
     // Aplicar DBSCAN
     std::vector<int> labels;
-    DBSCAN(mat, labels);
+    DBSCAN(mat, labels,epsilon);
 
     std::cout << "Labels: " << labels.size() << std::endl;
 
-
-    // Filtrar std_local_map según los clusters identificados
+    // Filtrar y fusionar std_local_map según los clusters identificados
     std::deque<STDesc> filtered_std_local_map;
 
-    // Busco el maximo de labels, si es diferente de -2 es que hubo asociacion de datos si no no
+    // Fusionar los descriptores según los clusters identificados
     int max_label = *std::max_element(labels.begin(), labels.end());
-    if(max_label<0){
+    std::cout << "max_label: " << max_label << std::endl;
+
+    if (max_label < 0) {
         filtered_std_local_map = std_local_map;
-    }
-    else{
+    } else {
+        std::vector<std::vector<int>> clusters(max_label + 1);
+
         for (int i = 0; i < labels.size(); ++i) {
-            if (labels[i] >= 0) { // Si el descriptor no es ruido
-                filtered_std_local_map.push_back(std_local_map[i]);
+            if (labels[i] >= 0) {
+                clusters[labels[i]].push_back(i);
             }
+        }
+
+        for (const auto& cluster : clusters) {
+            if (cluster.empty()) continue;
+
+            Eigen::VectorXf avg = Eigen::VectorXf::Zero(27);
+            for (const auto& index : cluster) {
+                avg += mat.row(index);
+            }
+            avg /= cluster.size();
+
+            STDesc merged_desc;
+            merged_desc.setFromMatrixRow(avg);
+            filtered_std_local_map.push_back(merged_desc);
         }
     }
 
-    // Actualizar std_local_map con los descriptores filtrados
+    std::cout << "Antes : " << std_local_map.size() << std::endl;
+
+    // Actualizar std_local_map con los descriptores filtrados y fusionados
     std_local_map = std::move(filtered_std_local_map);
 
-    // Actualizar la matriz y el KD-Tree con los descriptores filtrados
+    std::cout << "despues : " << std_local_map.size() << std::endl;
+
+    // Actualizar la matriz y el KD-Tree con los descriptores filtrados y fusionados
     num_desc = std_local_map.size();
     mat.resize(num_desc, 27);
 
@@ -414,7 +516,7 @@ void updateMatrixAndKDTreeWithFiltering(Eigen::MatrixXf& mat, std::unique_ptr<na
         addDescriptorToMatrix(mat, std_local_map[i], i);
     }
 
-    std::cout << "mat: " << mat.size() << std::endl;
+    std::cout << "mat: " << mat.size()/27 << std::endl;
 
     // Recrear el KD-Tree con la matriz actualizada
     index = std::make_unique<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>>(27, std::cref(mat), 10 /* max leaf */);
@@ -431,9 +533,12 @@ int main(int argc, char **argv) {
     ros::Publisher pubkeycurr = nh.advertise<visualization_msgs::MarkerArray>("std_curr", 10);
     ros::Publisher pubkeyprev = nh.advertise<visualization_msgs::MarkerArray>("std_prev", 10);    
     ros::Publisher pubkeymap = nh.advertise<visualization_msgs::MarkerArray>("std_map", 10); 
+    ros::Publisher pubkeymap_filter = nh.advertise<visualization_msgs::MarkerArray>("std_map_filter", 10);  
     
     ros::Publisher pub_curr_points = nh.advertise<sensor_msgs::PointCloud2>("std_curr_points", 10);
     ros::Publisher pub_prev_points = nh.advertise<sensor_msgs::PointCloud2>("std_prev_points", 10);
+    ros::Publisher pub_map_points = nh.advertise<sensor_msgs::PointCloud2>("std_map_points", 10);
+    
     ros::Publisher pubSTD = nh.advertise<visualization_msgs::MarkerArray>("pair_std", 10);
     ros::Publisher marker_pub_prev = nh.advertise<visualization_msgs::MarkerArray>("Axes_prev_STD", 10);
     ros::Publisher marker_pub_curr = nh.advertise<visualization_msgs::MarkerArray>("Axes_curr_STD", 10);
@@ -597,6 +702,8 @@ int main(int argc, char **argv) {
             pub_curr_points.publish(output_curr);
             //////////////////////////////////////////
 
+            
+
             ///////////////////// Previous std
             ////// visualizacion de los keypoints prev
             visualization_msgs::MarkerArray marker_array_prev;
@@ -640,7 +747,13 @@ int main(int argc, char **argv) {
 
             // Añadir los nuevos descriptores de stds_curr a std_local_map
             std_local_map.insert(std_local_map.end(), stds_curr.begin(), stds_curr.end());
-            counts_per_iteration.push_back(stds_curr.size());
+
+            std::cout << "Tamaño de std_local_map3: " << std_local_map.size() << std::endl;
+            
+
+        
+
+            counts_per_iteration.push_back(std_local_map.size());
 
             // std::cout << "Tamaño de std_local_map2 : " << std_local_map.size() << std::endl;
 
@@ -649,19 +762,43 @@ int main(int argc, char **argv) {
                 int count_to_remove = counts_per_iteration.front();
                  std::cout << "count_to_remove: " << count_to_remove <<std::endl;
                 counts_per_iteration.pop_front();
-                for (int i = 0; i < count_to_remove; ++i) {
-               // for (int i = 0; i < std_local_map.size()/2; ++i) {    
+                //for (int i = 0; i < count_to_remove; ++i) {
+                for (int i = 0; i < std_local_map.size()/2; ++i) {    
                     std_local_map.pop_front();
                     
                 }
             }
 
-            std::cout << "Tamaño de std_local_map3: " << std_local_map.size() << std::endl;
-            
+            // Actualizar la matriz y el KD-Tree con filtrado DBSCAN
+            updateMatrixAndKDTreeWithFiltering(mat, index, std_local_map,config_setting.epsilon_);
+            //updateMatrixAndKDTree(mat, index, std_local_map);
 
-                        // Actualizar la matriz y el KD-Tree con filtrado DBSCAN
-            //updateMatrixAndKDTreeWithFiltering(mat, index, std_local_map);
-            updateMatrixAndKDTree(mat, index, std_local_map);
+
+
+            ////// publicacion de nube de puntos en los vertices de los stds del MAPA filtrado
+            pcl::PointCloud<pcl::PointXYZ>::Ptr std_map_pcl(new pcl::PointCloud<pcl::PointXYZ>);
+            MAPconvertToPointCloud(mat, std_map_pcl);
+            sensor_msgs::PointCloud2 output_map_point;
+            pcl::toROSMsg(*std_map_pcl, output_map_point);
+            output_map_point.header.frame_id = "map";
+            pub_map_points.publish(output_map_point);
+
+            ////// visualizacion de los triangulos del mapa filtrado
+            visualization_msgs::MarkerArray marker_map_filter;
+            Eigen::Vector3f colorVector_map_fil(1.0f, 0.0f, 1.0f);  // rojo
+            MAPconvertToMarkers(mat, marker_map_filter,colorVector_map_fil ,0.5);
+            pubkeymap_filter.publish(marker_map_filter);
+            visualization_msgs::Marker delete_map_filter;
+            delete_map_filter.action = visualization_msgs::Marker::DELETEALL;
+            marker_map_filter.markers.clear();  // Asegúrate de que el array de marcadores esté vacío
+            marker_map_filter.markers.push_back(delete_map_filter);
+            pubkeymap_filter.publish(marker_map_filter);
+            //////////////////////////////////////////
+
+
+            //////////////////////////////////////////
+
+
 
             auto end = std::chrono::high_resolution_clock::now();
             std::chrono::duration<double> elapsed = end - start;

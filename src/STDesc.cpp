@@ -110,8 +110,12 @@ void read_parameters(ros::NodeHandle &nh, ConfigSetting &config_setting) {
             << std::endl;
   std::cout << "max window size: " << config_setting.max_window_size_
             << std::endl;
-  std::cout << "max window size: " << config_setting.kdtree_threshold_
+  std::cout << "kdtree_threshold_: " << config_setting.kdtree_threshold_
             << std::endl;
+  
+  std::cout << "kdtree_map: " << config_setting.epsilon_
+            << std::endl;
+
 }
 
 void load_pose_with_time(

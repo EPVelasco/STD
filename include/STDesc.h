@@ -65,6 +65,7 @@ typedef struct ConfigSetting {
   double dis_threshold_ = 0.3;
   int max_window_size_ = 10;
   double kdtree_threshold_ = 50.0;
+  double epsilon_ = 100.0;
 
 } ConfigSetting;
 
@@ -120,6 +121,20 @@ typedef struct STDesc {
 
   // some other inform attached to each vertex,e.g., intensity
   Eigen::Vector3d vertex_attached_;
+
+   void setFromMatrixRow(const Eigen::VectorXf &row) {
+        side_length_ = row.segment<3>(0).cast<double>();
+        angle_ = row.segment<3>(3).cast<double>();
+        center_ = row.segment<3>(6).cast<double>();
+        vertex_A_ = row.segment<3>(9).cast<double>();
+        vertex_B_ = row.segment<3>(12).cast<double>();
+        vertex_C_ = row.segment<3>(15).cast<double>();
+        Eigen::Map<const Eigen::Matrix<float, 3, 3, Eigen::RowMajor>> axes_f(row.segment<9>(18).data());
+        // Assuming axes_f can be set directly
+        // Note: Adjust if STDesc stores axes differently
+    }
+
+
 } STDesc;
 
 /////////////////////// Descriptor STD BBDD to nanoflann
