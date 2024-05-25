@@ -110,7 +110,6 @@ bool syncPackages(PointCloud::Ptr &cloud, Eigen::Affine3d &pose) {
 
     return true;
 }
-
 ////////////////////////////////////////////////////////////////
 
 bool readPC(PointCloud::Ptr &cloud) {
@@ -367,105 +366,11 @@ void generateArrow(const STDesc& desc1, const STDesc& desc2, visualization_msgs:
     marker_array.markers.push_back(arrow);
 }
 
-// DBSCAN parameters
-//const double EPSILON = 10.0; // Radio de búsqueda
-const int MIN_POINTS = 1; // Mínimo número de puntos para formar un cluster
-
-void DBSCAN(const Eigen::MatrixXf &data, std::vector<int> &labels, const double EPSILON) {
-    using namespace nanoflann;
-    const int num_points = data.rows();
-
-    // // Utilizar los vértices de los std para filtrar el mapa (están en la posición 6-8 y 18-26)
-    // Eigen::MatrixXf data_vertex(num_points, 12); // 3 columnas para el centro y 9 para los axes
-
-    // // Copiar los datos correspondientes
-    // data_vertex << data.block(0, 6, num_points, 3),   // Datos del centro del triángulo (columnas 6-8)
-    //                data.block(0, 18, num_points, 9);  // Datos de los axes del triángulo (columnas 18-26)
-
-    const int dim = data.cols();
-
-    labels.assign(num_points, -1); // Inicializar etiquetas a -1 (no visitado)
-
-    typedef KDTreeEigenMatrixAdaptor<Eigen::MatrixXf> KDTree;
-    KDTree kdtree(dim, std::cref(data), 10 /* max leaf */);
-    kdtree.index_->buildIndex();
-
-    int cluster_id = 0;
-
-    for (int i = 0; i < num_points; ++i) {
-        if (labels[i] != -1) continue; // Ya visitado
-
-        // Buscar vecinos dentro de EPSILON
-        nanoflann::SearchParameters params;
-        std::vector<nanoflann::ResultItem<long int, float>> ret_matches;
-
-        const size_t nMatches = kdtree.index_->radiusSearch(data.row(i).data(), EPSILON * EPSILON, ret_matches, params);
-        std::cout << "Punto " << i << " tiene " << nMatches << " vecinos dentro del radio " << EPSILON << std::endl;
-
-        // Filtrar el punto actual de los vecinos
-        std::vector<size_t> valid_neighbors;
-        for (const auto& match : ret_matches) {
-            if (match.first != i) {
-                valid_neighbors.push_back(match.first);
-            }
-        }
-
-        if (valid_neighbors.size() < MIN_POINTS) {
-            labels[i] = -2; // Ruido
-            continue;
-        }
-
-        // Asignar un nuevo ID de cluster
-        labels[i] = cluster_id;
-        std::deque<size_t> seeds(valid_neighbors.begin(), valid_neighbors.end());
-
-        while (!seeds.empty()) {
-            const int curr_point = seeds.front();
-            seeds.pop_front();
-
-            if (labels[curr_point] == -2) {
-                labels[curr_point] = cluster_id; // Cambiar de ruido a borde
-            }
-
-            if (labels[curr_point] != -1) continue; // Ya procesado
-
-            labels[curr_point] = cluster_id;
-
-            ret_matches.clear();
-            const size_t nMatchesInner = kdtree.index_->radiusSearch(data.row(curr_point).data(), EPSILON * EPSILON, ret_matches, params);
-
-            std::vector<size_t> valid_neighbors_inner;
-            for (const auto& match : ret_matches) {
-                if (match.first != curr_point) {
-                    valid_neighbors_inner.push_back(match.first);
-                }
-            }
-
-            if (valid_neighbors_inner.size() >= MIN_POINTS) {
-                for (const auto& match : valid_neighbors_inner) {
-                    seeds.push_back(match);
-                }
-            }
-        }
-
-        ++cluster_id;
-    }
-
-    std::cout << "Clusters: " << cluster_id << std::endl;
-    for (const auto& label_str : labels) {
-        if (label_str != -2)
-            std::cout << "label_str: " << label_str << std::endl;
-    }
-}
-
 // Función para calcular la distancia euclidiana entre dos vértices
 float calcularDistancia(const Eigen::Vector3f &v1, const Eigen::Vector3f &v2) {
     return (v1 - v2).norm();
 }
 
-
-
- 
 void extractVerticesToMatrix(const std::deque<STDesc>& std_local_map, Eigen::MatrixXf& all_vertices) {
     const int num_desc = std_local_map.size();
     all_vertices.resize(3 * num_desc, 3); // 3 filas por descriptor, cada una con 3 coordenadas
@@ -477,162 +382,53 @@ void extractVerticesToMatrix(const std::deque<STDesc>& std_local_map, Eigen::Mat
     }
 }
 
-void build_stdesc_EPVS(
-    const pcl::PointCloud<pcl::PointXYZINormal>::Ptr &corner_points,
-    std::vector<STDesc> &stds_vec, ConfigSetting config_setting_) {
-  stds_vec.clear();
-  double scale = 1.0 / config_setting_.std_side_resolution_;
-  int near_num = 1;
-  double max_dis_threshold = 100000;
-  double min_dis_threshold = 0 ;
-  std::unordered_map<VOXEL_LOC, bool> feat_map;
-  pcl::KdTreeFLANN<pcl::PointXYZINormal>::Ptr kd_tree(
-      new pcl::KdTreeFLANN<pcl::PointXYZINormal>);
-  kd_tree->setInputCloud(corner_points);
-  std::vector<int> pointIdxNKNSearch(near_num);
-  std::vector<float> pointNKNSquaredDistance(near_num);
-  // Search N nearest corner points to form stds.
-  for (size_t i = 0; i < corner_points->size(); i++) {
-    pcl::PointXYZINormal searchPoint = corner_points->points[i];
-    if (kd_tree->nearestKSearch(searchPoint, near_num, pointIdxNKNSearch,
-                                pointNKNSquaredDistance) > 0) {
-      for (int m = 1; m < near_num - 1; m++) {
-        for (int n = m + 1; n < near_num; n++) {
-          pcl::PointXYZINormal p1 = searchPoint;
-          pcl::PointXYZINormal p2 = corner_points->points[pointIdxNKNSearch[m]];
-          pcl::PointXYZINormal p3 = corner_points->points[pointIdxNKNSearch[n]];
-          Eigen::Vector3d normal_inc1(p1.normal_x - p2.normal_x,
-                                      p1.normal_y - p2.normal_y,
-                                      p1.normal_z - p2.normal_z);
-          Eigen::Vector3d normal_inc2(p3.normal_x - p2.normal_x,
-                                      p3.normal_y - p2.normal_y,
-                                      p3.normal_z - p2.normal_z);
-          Eigen::Vector3d normal_add1(p1.normal_x + p2.normal_x,
-                                      p1.normal_y + p2.normal_y,
-                                      p1.normal_z + p2.normal_z);
-          Eigen::Vector3d normal_add2(p3.normal_x + p2.normal_x,
-                                      p3.normal_y + p2.normal_y,
-                                      p3.normal_z + p2.normal_z);
-          double a = sqrt(pow(p1.x - p2.x, 2) + pow(p1.y - p2.y, 2) +
-                          pow(p1.z - p2.z, 2));
-          double b = sqrt(pow(p1.x - p3.x, 2) + pow(p1.y - p3.y, 2) +
-                          pow(p1.z - p3.z, 2));
-          double c = sqrt(pow(p3.x - p2.x, 2) + pow(p3.y - p2.y, 2) +
-                          pow(p3.z - p2.z, 2));
-          if (a > max_dis_threshold || b > max_dis_threshold ||
-              c > max_dis_threshold || a < min_dis_threshold ||
-              b < min_dis_threshold || c < min_dis_threshold) {
-            continue;
-          }
-          // re-range the vertex by the side length
-          double temp;
-          Eigen::Vector3d A, B, C;
-          Eigen::Vector3i l1, l2, l3;
-          Eigen::Vector3i l_temp;
-          l1 << 1, 2, 0;
-          l2 << 1, 0, 3;
-          l3 << 0, 2, 3;
-          if (a > b) {
-            temp = a;
-            a = b;
-            b = temp;
-            l_temp = l1;
-            l1 = l2;
-            l2 = l_temp;
-          }
-          if (b > c) {
-            temp = b;
-            b = c;
-            c = temp;
-            l_temp = l2;
-            l2 = l3;
-            l3 = l_temp;
-          }
-          if (a > b) {
-            temp = a;
-            a = b;
-            b = temp;
-            l_temp = l1;
-            l1 = l2;
-            l2 = l_temp;
-          }
-          // check augnmentation
-          pcl::PointXYZ d_p;
-          d_p.x = a * 1000;
-          d_p.y = b * 1000;
-          d_p.z = c * 1000;
-          VOXEL_LOC position((int64_t)d_p.x, (int64_t)d_p.y, (int64_t)d_p.z);
-          auto iter = feat_map.find(position);
-          Eigen::Vector3d normal_1, normal_2, normal_3;
-          if (iter == feat_map.end()) {
-            Eigen::Vector3d vertex_attached;
-            if (l1[0] == l2[0]) {
-              A << p1.x, p1.y, p1.z;
-              normal_1 << p1.normal_x, p1.normal_y, p1.normal_z;
-              vertex_attached[0] = p1.intensity;
-            } else if (l1[1] == l2[1]) {
-              A << p2.x, p2.y, p2.z;
-              normal_1 << p2.normal_x, p2.normal_y, p2.normal_z;
-              vertex_attached[0] = p2.intensity;
-            } else {
-              A << p3.x, p3.y, p3.z;
-              normal_1 << p3.normal_x, p3.normal_y, p3.normal_z;
-              vertex_attached[0] = p3.intensity;
-            }
-            if (l1[0] == l3[0]) {
-              B << p1.x, p1.y, p1.z;
-              normal_2 << p1.normal_x, p1.normal_y, p1.normal_z;
-              vertex_attached[1] = p1.intensity;
-            } else if (l1[1] == l3[1]) {
-              B << p2.x, p2.y, p2.z;
-              normal_2 << p2.normal_x, p2.normal_y, p2.normal_z;
-              vertex_attached[1] = p2.intensity;
-            } else {
-              B << p3.x, p3.y, p3.z;
-              normal_2 << p3.normal_x, p3.normal_y, p3.normal_z;
-              vertex_attached[1] = p3.intensity;
-            }
-            if (l2[0] == l3[0]) {
-              C << p1.x, p1.y, p1.z;
-              normal_3 << p1.normal_x, p1.normal_y, p1.normal_z;
-              vertex_attached[2] = p1.intensity;
-            } else if (l2[1] == l3[1]) {
-              C << p2.x, p2.y, p2.z;
-              normal_3 << p2.normal_x, p2.normal_y, p2.normal_z;
-              vertex_attached[2] = p2.intensity;
-            } else {
-              C << p3.x, p3.y, p3.z;
-              normal_3 << p3.normal_x, p3.normal_y, p3.normal_z;
-              vertex_attached[2] = p3.intensity;
-            }
-            STDesc single_descriptor;
-            current_frame_id_++;
-            single_descriptor.vertex_A_ = A;
-            single_descriptor.vertex_B_ = B;
-            single_descriptor.vertex_C_ = C;
-            single_descriptor.center_ = (A + B + C) / 3;
-            single_descriptor.vertex_attached_ = vertex_attached;
-            single_descriptor.side_length_ << scale * a, scale * b, scale * c;
-            single_descriptor.angle_[0] = fabs(5 * normal_1.dot(normal_2));
-            single_descriptor.angle_[1] = fabs(5 * normal_1.dot(normal_3));
-            single_descriptor.angle_[2] = fabs(5 * normal_3.dot(normal_2));
-            single_descriptor.normal1_ = normal_1;
-            single_descriptor.normal2_ = normal_2;
-            single_descriptor.normal3_ = normal_3;
-            // single_descriptor.angle << 0, 0, 0;
-            single_descriptor.frame_id_ = current_frame_id_;
-            Eigen::Matrix3d triangle_positon;
-            feat_map[position] = true;
-            stds_vec.push_back(single_descriptor);
-          }
-        }
-      }
-    }
-  }
-};
+void build_std_filter( const pcl::PointCloud<pcl::PointXYZINormal>::Ptr &corner_points, std::vector<STDesc> &stds_vec, const ConfigSetting &config_setting_) {
 
+    double scale = 1.0 / config_setting_.std_side_resolution_;   
+    unsigned int current_frame_id_ = 0; // Se asume que este valor se incrementa en cada llamada a la función
+
+    for (size_t i = 0; i < corner_points->size(); i += 3) {
+        if (i + 2 >= corner_points->size()) break; // Asegurarse de que haya al menos tres puntos para formar un triángulo
+
+        pcl::PointXYZINormal p1 = corner_points->points[i];
+        pcl::PointXYZINormal p2 = corner_points->points[i + 1];
+        pcl::PointXYZINormal p3 = corner_points->points[i + 2];
+
+        Eigen::Vector3d A, B, C;
+        A << p1.x, p1.y, p1.z;
+        B << p2.x, p2.y, p2.z;
+        C << p3.x, p3.y, p3.z;
+
+        double a = (A - B).norm();
+        double b = (A - C).norm();
+        double c = (B - C).norm();
+
+        Eigen::Vector3d normal_1(p1.normal_x, p1.normal_y, p1.normal_z);
+        Eigen::Vector3d normal_2(p2.normal_x, p2.normal_y, p2.normal_z);
+        Eigen::Vector3d normal_3(p3.normal_x, p3.normal_y, p3.normal_z);
+
+        STDesc single_descriptor;
+        current_frame_id_++;
+        single_descriptor.vertex_A_ = A;
+        single_descriptor.vertex_B_ = B;
+        single_descriptor.vertex_C_ = C;
+        single_descriptor.center_ = (A + B + C) / 3;
+        single_descriptor.side_length_ << scale * a, scale * b, scale * c;
+        single_descriptor.angle_[0] = fabs(5 * normal_1.dot(normal_2));
+        single_descriptor.angle_[1] = fabs(5 * normal_1.dot(normal_3));
+        single_descriptor.angle_[2] = fabs(5 * normal_3.dot(normal_2));
+        single_descriptor.normal1_ = normal_1;
+        single_descriptor.normal2_ = normal_2;
+        single_descriptor.normal3_ = normal_3;
+        single_descriptor.frame_id_ = current_frame_id_;
+
+        stds_vec.push_back(single_descriptor);
+    }
+}
+   
 // Función para verificar y agrupar vértices dentro de un radio
-void verifyvertx(const Eigen::MatrixXf &vertices, std::vector<int> &labels, const float EPSILON) {
+void cluster_vertx(const Eigen::MatrixXf &vertices, std::vector<int> &labels, const float EPSILON) {
+    std::cout<<"epsilon: "<<EPSILON<<std::endl;
     const int num_points = vertices.rows();
     labels.assign(num_points, -1); // Inicializar etiquetas a -1 (no visitado)
     int current_label = 0;
@@ -651,7 +447,10 @@ void verifyvertx(const Eigen::MatrixXf &vertices, std::vector<int> &labels, cons
         }
         current_label++;
     }
+
+
 }
+
 // Función para promediar los vértices agrupados por labels
 Eigen::MatrixXf promediarVertices(const Eigen::MatrixXf &vertices, const std::vector<int> &labels) {
     std::map<int, Eigen::Vector3f> sum_vertices;
@@ -703,22 +502,17 @@ void updateMatrixAndKDTreeWithFiltering(Eigen::MatrixXf& mat, std::unique_ptr<na
     Eigen::MatrixXf all_vertices;
     extractVerticesToMatrix(std_local_map, all_vertices);
 
-    // Aplicar DBSCAN a todos los vértices
-    std::vector<int> vertex_labels;
-    std::cout << "Vertices antes de la agrupación y el promedio:" << std::endl;
-    std::cout << all_vertices << std::endl;
-    verifyvertx(all_vertices, vertex_labels, config_setting.epsilon_);
-    std::cout << "Vertices después de la agrupación y el promedio:" << std::endl;
-    std::cout << all_vertices << std::endl;
+    // Aplicar cluster a todos los vértices
+     std::vector<int> vertex_labels;
+    cluster_vertx(all_vertices, vertex_labels, config_setting.epsilon_);
 
-     std::cout << "Labels después de la agrupación:" << std::endl;
-    for (int label : vertex_labels) {
-        std::cout << label << " ";
-    }
-    std::cout << std::endl;
+    // std::cout << "Labels después de la agrupación:" << std::endl;
+    // for (int label : vertex_labels) {
+    //     std::cout << label << " ";
+    // }
+    // std::cout << std::endl;
 
     Eigen::MatrixXf new_vertices = promediarVertices(all_vertices, vertex_labels);
-
 
     // Reconstruir std_local_map con los vértices fusionados
     std::deque<STDesc> filtered_std_local_map;
@@ -749,18 +543,12 @@ void updateMatrixAndKDTreeWithFiltering(Eigen::MatrixXf& mat, std::unique_ptr<na
         corner_points->points.push_back(p3);
     }
 
-
     //Usar corner_points para construir stds_vec
     std::vector<STDesc> stds_vec;
-    build_stdesc_EPVS(corner_points, stds_vec, config_setting);
+    build_std_filter(corner_points, stds_vec, config_setting);
     filtered_std_local_map.assign(stds_vec.begin(), stds_vec.end());
-
-    std::cout << "Antes : " << std_local_map.size() << std::endl;
-
     // Actualizar std_local_map con los descriptores filtrados y fusionados
     std_local_map = std::move(filtered_std_local_map);
-
-    std::cout << "despues : " << std_local_map.size() << std::endl;
 
     // Actualizar la matriz y el KD-Tree con los descriptores filtrados y fusionados
     num_desc = std_local_map.size();
@@ -769,8 +557,6 @@ void updateMatrixAndKDTreeWithFiltering(Eigen::MatrixXf& mat, std::unique_ptr<na
     for (size_t i = 0; i < std_local_map.size(); ++i) {
         addDescriptorToMatrix(mat, std_local_map[i], i);
     }
-
-    std::cout << "mat: " << mat.size() / 36 << std::endl;
 
     // Recrear el KD-Tree con la matriz actualizada
     index = std::make_unique<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>>(36, std::cref(mat), 10 /* max leaf */);
@@ -936,9 +722,6 @@ int main(int argc, char **argv) {
             output_cloud.header.frame_id = "map";  // O el frame_id que desees
             cloud_pub.publish(output_cloud);
             
-
-
-
           ///////////////// Data visualization //////////////////////////////////////////////
 
             //// visualizacion de los keypoints current
@@ -962,9 +745,7 @@ int main(int argc, char **argv) {
             output_curr.header.frame_id = "map";
             pub_curr_points.publish(output_curr);
             //////////////////////////////////////////
-
             
-
             ///////////////////// Previous std
             ////// visualizacion de los keypoints prev
             visualization_msgs::MarkerArray marker_array_prev;
@@ -997,44 +778,27 @@ int main(int argc, char **argv) {
             // marker_array_map.markers.clear();  // Asegúrate de que el array de marcadores esté vacío
             // marker_array_map.markers.push_back(delete_marker_map);
             // pubkeymap.publish(marker_array_map);
-            
-
-            
+                        
             ////////////////////////////////////////////////////////////////////////////////////////////////
 
              std::cout << "Pares encontrados: " << cont_desc_pairs << std::endl;
-            // std::cout << "Tamaño de std_local_map1 : " << std_local_map.size() << std::endl;
-            // std::cout << "Tamaño de stds_curr : " << stds_curr.size() << std::endl;
 
             // Añadir los nuevos descriptores de stds_curr a std_local_map
             std_local_map.insert(std_local_map.end(), stds_curr.begin(), stds_curr.end());
-
-            std::cout << "Tamaño de std_local_map3: " << std_local_map.size() << std::endl;
-            
-
-        
-
-            counts_per_iteration.push_back(std_local_map.size());
-
-            // std::cout << "Tamaño de std_local_map2 : " << std_local_map.size() << std::endl;
-
+            //////////////////////////// Eliminacion de elementos por ventana ///////////////
+            counts_per_iteration.push_back(stds_curr.size());
             while (counts_per_iteration.size() > config_setting.max_window_size_) {
-                std::cout << "counts_per_iteration: " << counts_per_iteration.size() <<std::endl;
                 int count_to_remove = counts_per_iteration.front();
-                 std::cout << "count_to_remove: " << count_to_remove <<std::endl;
                 counts_per_iteration.pop_front();
-                //for (int i = 0; i < count_to_remove; ++i) {
-                for (int i = 0; i < std_local_map.size()/2; ++i) {    
-                    std_local_map.pop_front();
-                    
+                for (int i = 0; i < count_to_remove; ++i) {
+                    std_local_map.pop_front();                    
                 }
             }
+            ////////////////////////////////////////////////////////////////////////////////////
 
-            // Actualizar la matriz y el KD-Tree con filtrado DBSCAN
+            // Actualizar la matriz con el filtrado por vertices
             updateMatrixAndKDTreeWithFiltering(mat, index, std_local_map, config_setting);
             //updateMatrixAndKDTree(mat, index, std_local_map);
-
-
 
             ////// publicacion de nube de puntos en los vertices de los stds del MAPA filtrado
             pcl::PointCloud<pcl::PointXYZ>::Ptr std_map_pcl(new pcl::PointCloud<pcl::PointXYZ>);
@@ -1056,26 +820,18 @@ int main(int argc, char **argv) {
             pubkeymap_filter.publish(marker_map_filter);
             //////////////////////////////////////////
 
-
-            //////////////////////////////////////////
-
-
-
             auto end = std::chrono::high_resolution_clock::now();
             std::chrono::duration<double> elapsed = end - start;
 
-            //ROS_INFO("Extracted %lu ST", stds_curr.size());
             ROS_INFO("Extracted %lu ST descriptors in %f seconds", stds_curr.size(), elapsed.count());
             
-
             std_manager->publishPoses(pose_pub_prev, stds_prev_pair, msg_point->header);
             std_manager->publishPoses(pose_pub_curr, stds_curr_pair, msg_point->header);
 
             // Actualizar stds_prev
             stds_prev = stds_curr;
             pose_prev = pose;
-            std::cout<<"Iteracion: "<<cont_itera++<<std::endl;
-            
+            std::cout<<"Iteracion: "<<cont_itera++<<std::endl;            
         }
     }
 
