@@ -49,6 +49,7 @@ std::queue<sensor_msgs::PointCloud2::ConstPtr> laser_buffer;
 std::queue<nav_msgs::Odometry::ConstPtr> odom_buffer;
 
 sensor_msgs::PointCloud2::ConstPtr msg_point;
+int current_frame_id_=0;
 
 void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr &msg) {
     std::unique_lock<std::mutex> lock(laser_mtx);
@@ -251,6 +252,7 @@ void printSTDesc(const STDesc& desc) {
     std::cout << "Vertex A: " << desc.vertex_A_.transpose() << std::endl;
     std::cout << "Vertex B: " << desc.vertex_B_.transpose() << std::endl;
     std::cout << "Vertex C: " << desc.vertex_C_.transpose() << std::endl;
+    //std::cout << "Norms : " << desc.norms.transpose() << std::endl;
     std::cout << "Frame ID: " << desc.frame_id_ << std::endl;
 }
 
@@ -268,13 +270,16 @@ void printVector(const std::vector<T>& vec) {
 
 void addDescriptorToMatrix(Eigen::MatrixXf& mat, const STDesc& desc, int row) {
 
-    // la matriz tiene 27 elementos
+    // la matriz tiene 36 elementos
     Eigen::Vector3f side_length = desc.side_length_.cast<float>();
     Eigen::Vector3f angle = desc.angle_.cast<float>();
     Eigen::Vector3f center = desc.center_.cast<float>();
     Eigen::Vector3f vertex_A = desc.vertex_A_.cast<float>();
     Eigen::Vector3f vertex_B = desc.vertex_B_.cast<float>();
     Eigen::Vector3f vertex_C = desc.vertex_C_.cast<float>();
+    Eigen::Vector3f normal1 = desc.normal1_.cast<float>();
+    Eigen::Vector3f normal2 = desc.normal2_.cast<float>();
+    Eigen::Vector3f normal3 = desc.normal3_.cast<float>();
     Eigen::Matrix3d axes = desc.calculateReferenceFrame();
     Eigen::Matrix<float, 9, 1> axes_vec;
     axes_vec << axes(0),axes(1),axes(2),axes(3),axes(4),axes(5),axes(6),axes(7),axes(8);
@@ -284,12 +289,15 @@ void addDescriptorToMatrix(Eigen::MatrixXf& mat, const STDesc& desc, int row) {
     mat.block<1, 3>(row, 9) = vertex_A.transpose();
     mat.block<1, 3>(row, 12) = vertex_B.transpose();
     mat.block<1, 3>(row, 15) = vertex_C.transpose();
-    mat.block<1, 9>(row, 18) = axes_vec.transpose();
+    mat.block<1, 3>(row, 18) = normal1.transpose();
+    mat.block<1, 3>(row, 21) = normal2.transpose();
+    mat.block<1, 3>(row, 24) = normal3.transpose();
+    mat.block<1, 9>(row, 27) = axes_vec.transpose();
 }
 
 void updateMatrixAndKDTree(Eigen::MatrixXf& mat, std::unique_ptr<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>>& index, const std::deque<STDesc>& std_local_map) {
     int num_desc = std_local_map.size();
-    mat.resize(num_desc, 27);
+    mat.resize(num_desc, 36);
 
     // Rellenar la matriz con los descriptores actuales
     for (size_t i = 0; i < std_local_map.size(); ++i) {
@@ -297,7 +305,7 @@ void updateMatrixAndKDTree(Eigen::MatrixXf& mat, std::unique_ptr<nanoflann::KDTr
     }
 
     // Recrear el KD-Tree con la matriz actualizada
-    index = std::make_unique<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>>(27, std::cref(mat), 10 /* max leaf */);
+    index = std::make_unique<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>>(36, std::cref(mat), 10 /* max leaf */);
     index->index_->buildIndex();
 }
 
@@ -450,56 +458,302 @@ void DBSCAN(const Eigen::MatrixXf &data, std::vector<int> &labels, const double 
     }
 }
 
-void updateMatrixAndKDTreeWithFiltering(Eigen::MatrixXf& mat, std::unique_ptr<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>>& index, std::deque<STDesc>& std_local_map, const double epsilon) {
+// Función para calcular la distancia euclidiana entre dos vértices
+float calcularDistancia(const Eigen::Vector3f &v1, const Eigen::Vector3f &v2) {
+    return (v1 - v2).norm();
+}
+
+
+
+ 
+void extractVerticesToMatrix(const std::deque<STDesc>& std_local_map, Eigen::MatrixXf& all_vertices) {
+    const int num_desc = std_local_map.size();
+    all_vertices.resize(3 * num_desc, 3); // 3 filas por descriptor, cada una con 3 coordenadas
+
+    for (size_t i = 0; i < num_desc; ++i) {
+        all_vertices.row(3 * i) = std_local_map[i].vertex_A_.transpose().cast<float>();   // vertex_A
+        all_vertices.row(3 * i + 1) = std_local_map[i].vertex_B_.transpose().cast<float>(); // vertex_B
+        all_vertices.row(3 * i + 2) = std_local_map[i].vertex_C_.transpose().cast<float>(); // vertex_C
+    }
+}
+
+void build_stdesc_EPVS(
+    const pcl::PointCloud<pcl::PointXYZINormal>::Ptr &corner_points,
+    std::vector<STDesc> &stds_vec, ConfigSetting config_setting_) {
+  stds_vec.clear();
+  double scale = 1.0 / config_setting_.std_side_resolution_;
+  int near_num = 1;
+  double max_dis_threshold = 100000;
+  double min_dis_threshold = 0 ;
+  std::unordered_map<VOXEL_LOC, bool> feat_map;
+  pcl::KdTreeFLANN<pcl::PointXYZINormal>::Ptr kd_tree(
+      new pcl::KdTreeFLANN<pcl::PointXYZINormal>);
+  kd_tree->setInputCloud(corner_points);
+  std::vector<int> pointIdxNKNSearch(near_num);
+  std::vector<float> pointNKNSquaredDistance(near_num);
+  // Search N nearest corner points to form stds.
+  for (size_t i = 0; i < corner_points->size(); i++) {
+    pcl::PointXYZINormal searchPoint = corner_points->points[i];
+    if (kd_tree->nearestKSearch(searchPoint, near_num, pointIdxNKNSearch,
+                                pointNKNSquaredDistance) > 0) {
+      for (int m = 1; m < near_num - 1; m++) {
+        for (int n = m + 1; n < near_num; n++) {
+          pcl::PointXYZINormal p1 = searchPoint;
+          pcl::PointXYZINormal p2 = corner_points->points[pointIdxNKNSearch[m]];
+          pcl::PointXYZINormal p3 = corner_points->points[pointIdxNKNSearch[n]];
+          Eigen::Vector3d normal_inc1(p1.normal_x - p2.normal_x,
+                                      p1.normal_y - p2.normal_y,
+                                      p1.normal_z - p2.normal_z);
+          Eigen::Vector3d normal_inc2(p3.normal_x - p2.normal_x,
+                                      p3.normal_y - p2.normal_y,
+                                      p3.normal_z - p2.normal_z);
+          Eigen::Vector3d normal_add1(p1.normal_x + p2.normal_x,
+                                      p1.normal_y + p2.normal_y,
+                                      p1.normal_z + p2.normal_z);
+          Eigen::Vector3d normal_add2(p3.normal_x + p2.normal_x,
+                                      p3.normal_y + p2.normal_y,
+                                      p3.normal_z + p2.normal_z);
+          double a = sqrt(pow(p1.x - p2.x, 2) + pow(p1.y - p2.y, 2) +
+                          pow(p1.z - p2.z, 2));
+          double b = sqrt(pow(p1.x - p3.x, 2) + pow(p1.y - p3.y, 2) +
+                          pow(p1.z - p3.z, 2));
+          double c = sqrt(pow(p3.x - p2.x, 2) + pow(p3.y - p2.y, 2) +
+                          pow(p3.z - p2.z, 2));
+          if (a > max_dis_threshold || b > max_dis_threshold ||
+              c > max_dis_threshold || a < min_dis_threshold ||
+              b < min_dis_threshold || c < min_dis_threshold) {
+            continue;
+          }
+          // re-range the vertex by the side length
+          double temp;
+          Eigen::Vector3d A, B, C;
+          Eigen::Vector3i l1, l2, l3;
+          Eigen::Vector3i l_temp;
+          l1 << 1, 2, 0;
+          l2 << 1, 0, 3;
+          l3 << 0, 2, 3;
+          if (a > b) {
+            temp = a;
+            a = b;
+            b = temp;
+            l_temp = l1;
+            l1 = l2;
+            l2 = l_temp;
+          }
+          if (b > c) {
+            temp = b;
+            b = c;
+            c = temp;
+            l_temp = l2;
+            l2 = l3;
+            l3 = l_temp;
+          }
+          if (a > b) {
+            temp = a;
+            a = b;
+            b = temp;
+            l_temp = l1;
+            l1 = l2;
+            l2 = l_temp;
+          }
+          // check augnmentation
+          pcl::PointXYZ d_p;
+          d_p.x = a * 1000;
+          d_p.y = b * 1000;
+          d_p.z = c * 1000;
+          VOXEL_LOC position((int64_t)d_p.x, (int64_t)d_p.y, (int64_t)d_p.z);
+          auto iter = feat_map.find(position);
+          Eigen::Vector3d normal_1, normal_2, normal_3;
+          if (iter == feat_map.end()) {
+            Eigen::Vector3d vertex_attached;
+            if (l1[0] == l2[0]) {
+              A << p1.x, p1.y, p1.z;
+              normal_1 << p1.normal_x, p1.normal_y, p1.normal_z;
+              vertex_attached[0] = p1.intensity;
+            } else if (l1[1] == l2[1]) {
+              A << p2.x, p2.y, p2.z;
+              normal_1 << p2.normal_x, p2.normal_y, p2.normal_z;
+              vertex_attached[0] = p2.intensity;
+            } else {
+              A << p3.x, p3.y, p3.z;
+              normal_1 << p3.normal_x, p3.normal_y, p3.normal_z;
+              vertex_attached[0] = p3.intensity;
+            }
+            if (l1[0] == l3[0]) {
+              B << p1.x, p1.y, p1.z;
+              normal_2 << p1.normal_x, p1.normal_y, p1.normal_z;
+              vertex_attached[1] = p1.intensity;
+            } else if (l1[1] == l3[1]) {
+              B << p2.x, p2.y, p2.z;
+              normal_2 << p2.normal_x, p2.normal_y, p2.normal_z;
+              vertex_attached[1] = p2.intensity;
+            } else {
+              B << p3.x, p3.y, p3.z;
+              normal_2 << p3.normal_x, p3.normal_y, p3.normal_z;
+              vertex_attached[1] = p3.intensity;
+            }
+            if (l2[0] == l3[0]) {
+              C << p1.x, p1.y, p1.z;
+              normal_3 << p1.normal_x, p1.normal_y, p1.normal_z;
+              vertex_attached[2] = p1.intensity;
+            } else if (l2[1] == l3[1]) {
+              C << p2.x, p2.y, p2.z;
+              normal_3 << p2.normal_x, p2.normal_y, p2.normal_z;
+              vertex_attached[2] = p2.intensity;
+            } else {
+              C << p3.x, p3.y, p3.z;
+              normal_3 << p3.normal_x, p3.normal_y, p3.normal_z;
+              vertex_attached[2] = p3.intensity;
+            }
+            STDesc single_descriptor;
+            current_frame_id_++;
+            single_descriptor.vertex_A_ = A;
+            single_descriptor.vertex_B_ = B;
+            single_descriptor.vertex_C_ = C;
+            single_descriptor.center_ = (A + B + C) / 3;
+            single_descriptor.vertex_attached_ = vertex_attached;
+            single_descriptor.side_length_ << scale * a, scale * b, scale * c;
+            single_descriptor.angle_[0] = fabs(5 * normal_1.dot(normal_2));
+            single_descriptor.angle_[1] = fabs(5 * normal_1.dot(normal_3));
+            single_descriptor.angle_[2] = fabs(5 * normal_3.dot(normal_2));
+            single_descriptor.normal1_ = normal_1;
+            single_descriptor.normal2_ = normal_2;
+            single_descriptor.normal3_ = normal_3;
+            // single_descriptor.angle << 0, 0, 0;
+            single_descriptor.frame_id_ = current_frame_id_;
+            Eigen::Matrix3d triangle_positon;
+            feat_map[position] = true;
+            stds_vec.push_back(single_descriptor);
+          }
+        }
+      }
+    }
+  }
+};
+
+// Función para verificar y agrupar vértices dentro de un radio
+void verifyvertx(const Eigen::MatrixXf &vertices, std::vector<int> &labels, const float EPSILON) {
+    const int num_points = vertices.rows();
+    labels.assign(num_points, -1); // Inicializar etiquetas a -1 (no visitado)
+    int current_label = 0;
+
+    for (int i = 0; i < num_points; ++i) {
+        if (labels[i] != -1) continue; // Si ya está etiquetado, continuar al siguiente
+
+        // Etiquetar el punto actual con una nueva etiqueta de cluster
+        labels[i] = current_label;
+
+        // Recorrer todos los puntos desde el siguiente al actual para encontrar vecinos
+        for (int j = i + 1; j < num_points; ++j) {
+            if (calcularDistancia(vertices.row(i).transpose(), vertices.row(j).transpose()) <= EPSILON) {
+                labels[j] = current_label; // Etiquetar el punto vecino con la misma etiqueta de cluster
+            }
+        }
+        current_label++;
+    }
+}
+// Función para promediar los vértices agrupados por labels
+Eigen::MatrixXf promediarVertices(const Eigen::MatrixXf &vertices, const std::vector<int> &labels) {
+    std::map<int, Eigen::Vector3f> sum_vertices;
+    std::map<int, int> count_vertices;
+
+    // Sumarizar los vértices por label
+    for (int i = 0; i < vertices.rows(); ++i) {
+        int label = labels[i];
+        if (label >= 0) {
+            if (sum_vertices.find(label) == sum_vertices.end()) {
+                sum_vertices[label] = Eigen::Vector3f::Zero();
+                count_vertices[label] = 0;
+            }
+            sum_vertices[label] += vertices.row(i).transpose();
+            count_vertices[label] += 1;
+        }
+    }
+
+    // Crear una nueva matriz de vértices con los promedios
+    Eigen::MatrixXf new_vertices(vertices.rows(), vertices.cols());
+
+    for (int i = 0; i < vertices.rows(); ++i) {
+        int label = labels[i];
+        if (label >= 0 && count_vertices[label] > 0) {
+            new_vertices.row(i) = (sum_vertices[label] / count_vertices[label]).transpose();
+        } else {
+            new_vertices.row(i) = vertices.row(i);
+        }
+    }
+
+    return new_vertices;
+}
+
+void updateMatrixAndKDTreeWithFiltering(Eigen::MatrixXf& mat, std::unique_ptr<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>>& index, std::deque<STDesc>& std_local_map,  ConfigSetting config_setting) {
     std::cout << "Tamaño de std_local_map: " << std_local_map.size() << std::endl;
-    std::cout << "Tamaño de  a mat: " << mat.size()/27 << std::endl;
+    std::cout << "Tamaño de  a mat: " << mat.size()/36 << std::endl;
 
     int num_desc = std_local_map.size();
-    mat.resize(num_desc, 27);
+    mat.resize(num_desc, 36);
 
     for (size_t i = 0; i < std_local_map.size(); ++i) {
         addDescriptorToMatrix(mat, std_local_map[i], i);
     }
-    std::cout << "Tamaño de std_local_map a mat: " << mat.size()/27 << std::endl;
+    std::cout << "Tamaño de std_local_map a mat: " << mat.size()/36 << std::endl;
 
-    // Aplicar DBSCAN
-    std::vector<int> labels;
-    DBSCAN(mat, labels,epsilon);
+ 
 
-    std::cout << "Labels: " << labels.size() << std::endl;
+    /////////////////// Filtrado de vértices
+    Eigen::MatrixXf all_vertices;
+    extractVerticesToMatrix(std_local_map, all_vertices);
 
-    // Filtrar y fusionar std_local_map según los clusters identificados
-    std::deque<STDesc> filtered_std_local_map;
+    // Aplicar DBSCAN a todos los vértices
+    std::vector<int> vertex_labels;
+    std::cout << "Vertices antes de la agrupación y el promedio:" << std::endl;
+    std::cout << all_vertices << std::endl;
+    verifyvertx(all_vertices, vertex_labels, config_setting.epsilon_);
+    std::cout << "Vertices después de la agrupación y el promedio:" << std::endl;
+    std::cout << all_vertices << std::endl;
 
-    // Fusionar los descriptores según los clusters identificados
-    int max_label = *std::max_element(labels.begin(), labels.end());
-    std::cout << "max_label: " << max_label << std::endl;
-
-    if (max_label < 0) {
-        filtered_std_local_map = std_local_map;
-    } else {
-        std::vector<std::vector<int>> clusters(max_label + 1);
-
-        for (int i = 0; i < labels.size(); ++i) {
-            if (labels[i] >= 0) {
-                clusters[labels[i]].push_back(i);
-            }
-        }
-
-        for (const auto& cluster : clusters) {
-            if (cluster.empty()) continue;
-
-            Eigen::VectorXf avg = Eigen::VectorXf::Zero(27);
-            for (const auto& index : cluster) {
-                avg += mat.row(index);
-            }
-            avg /= cluster.size();
-
-            STDesc merged_desc;
-            merged_desc.setFromMatrixRow(avg);
-            filtered_std_local_map.push_back(merged_desc);
-        }
+     std::cout << "Labels después de la agrupación:" << std::endl;
+    for (int label : vertex_labels) {
+        std::cout << label << " ";
     }
+    std::cout << std::endl;
+
+    Eigen::MatrixXf new_vertices = promediarVertices(all_vertices, vertex_labels);
+
+
+    // Reconstruir std_local_map con los vértices fusionados
+    std::deque<STDesc> filtered_std_local_map;
+    pcl::PointCloud<pcl::PointXYZINormal>::Ptr corner_points(new pcl::PointCloud<pcl::PointXYZINormal>);
+
+    for (size_t i = 0; i < std_local_map.size(); ++i) {
+        pcl::PointXYZINormal p1, p2, p3;
+
+        Eigen::Vector3d vertex_A = new_vertices.row(3 * i).cast<double>();
+        Eigen::Vector3d vertex_B = new_vertices.row(3 * i + 1).cast<double>();
+        Eigen::Vector3d vertex_C = new_vertices.row(3 * i + 2).cast<double>();
+
+        // Supongamos que las normales originales están en std_local_map
+        p1.x = vertex_A[0]; p1.y = vertex_A[1]; p1.z = vertex_A[2];
+        p1.normal_x = std_local_map[i].normal1_[0]; p1.normal_y = std_local_map[i].normal1_[1]; p1.normal_z = std_local_map[i].normal1_[2];
+        p1.intensity = std_local_map[i].vertex_attached_[0];
+
+        p2.x = vertex_B[0]; p2.y = vertex_B[1]; p2.z = vertex_B[2];
+        p2.normal_x = std_local_map[i].normal2_[0]; p2.normal_y = std_local_map[i].normal2_[1]; p2.normal_z = std_local_map[i].normal2_[2];
+        p2.intensity = std_local_map[i].vertex_attached_[1];
+
+        p3.x = vertex_C[0]; p3.y = vertex_C[1]; p3.z = vertex_C[2];
+        p3.normal_x = std_local_map[i].normal3_[0]; p3.normal_y = std_local_map[i].normal3_[1]; p3.normal_z = std_local_map[i].normal3_[2];
+        p3.intensity = std_local_map[i].vertex_attached_[2];
+
+        corner_points->points.push_back(p1);
+        corner_points->points.push_back(p2);
+        corner_points->points.push_back(p3);
+    }
+
+
+    //Usar corner_points para construir stds_vec
+    std::vector<STDesc> stds_vec;
+    build_stdesc_EPVS(corner_points, stds_vec, config_setting);
+    filtered_std_local_map.assign(stds_vec.begin(), stds_vec.end());
 
     std::cout << "Antes : " << std_local_map.size() << std::endl;
 
@@ -510,16 +764,16 @@ void updateMatrixAndKDTreeWithFiltering(Eigen::MatrixXf& mat, std::unique_ptr<na
 
     // Actualizar la matriz y el KD-Tree con los descriptores filtrados y fusionados
     num_desc = std_local_map.size();
-    mat.resize(num_desc, 27);
+    mat.resize(num_desc, 36);
 
     for (size_t i = 0; i < std_local_map.size(); ++i) {
         addDescriptorToMatrix(mat, std_local_map[i], i);
     }
 
-    std::cout << "mat: " << mat.size()/27 << std::endl;
+    std::cout << "mat: " << mat.size() / 36 << std::endl;
 
     // Recrear el KD-Tree con la matriz actualizada
-    index = std::make_unique<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>>(27, std::cref(mat), 10 /* max leaf */);
+    index = std::make_unique<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>>(36, std::cref(mat), 10 /* max leaf */);
     index->index_->buildIndex();
 }
 
@@ -560,7 +814,7 @@ int main(int argc, char **argv) {
     std::deque<STDesc> std_local_map;
     std::deque<int> counts_per_iteration;
 
-    Eigen::MatrixXf mat(0, 27);
+    Eigen::MatrixXf mat(0, 36);
     std::unique_ptr<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>> index;
 
     PointCloud::Ptr current_cloud_world(new PointCloud);
@@ -619,7 +873,11 @@ int main(int argc, char **argv) {
                         Eigen::Vector3f vertex_A = desc.vertex_A_.cast<float>();
                         Eigen::Vector3f vertex_B = desc.vertex_B_.cast<float>();
                         Eigen::Vector3f vertex_C = desc.vertex_C_.cast<float>();
+                        Eigen::Vector3f norms1 = desc.normal1_.cast<float>();
+                        Eigen::Vector3f norms2 = desc.normal2_.cast<float>();
+                        Eigen::Vector3f norms3 = desc.normal3_.cast<float>();
                         Eigen::Matrix3d axes_f = desc.calculateReferenceFrame();
+
 
                         query.insert(query.end(), side_length.data(), side_length.data() + 3);
                         query.insert(query.end(), angle.data(), angle.data() + 3);
@@ -627,6 +885,9 @@ int main(int argc, char **argv) {
                         query.insert(query.end(), vertex_A.data(), vertex_A.data() + 3);
                         query.insert(query.end(), vertex_B.data(), vertex_B.data() + 3);
                         query.insert(query.end(), vertex_C.data(), vertex_C.data() + 3);
+                        query.insert(query.end(), norms1.data(), norms1.data() + 3);
+                        query.insert(query.end(), norms2.data(), norms2.data() + 3);
+                        query.insert(query.end(), norms3.data(), norms3.data() + 3);
                         query.insert(query.end(), axes_f.data(), axes_f.data() + axes_f.size());
 
                         // Buscar el descriptor más cercano
@@ -770,7 +1031,7 @@ int main(int argc, char **argv) {
             }
 
             // Actualizar la matriz y el KD-Tree con filtrado DBSCAN
-            updateMatrixAndKDTreeWithFiltering(mat, index, std_local_map,config_setting.epsilon_);
+            updateMatrixAndKDTreeWithFiltering(mat, index, std_local_map, config_setting);
             //updateMatrixAndKDTree(mat, index, std_local_map);
 
 

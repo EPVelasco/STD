@@ -94,6 +94,7 @@ void read_parameters(ros::NodeHandle &nh, ConfigSetting &config_setting) {
 
   nh.param<int>("max_window_size", config_setting.max_window_size_, 10);
   nh.param<double>("kdtree_threshold", config_setting.kdtree_threshold_, 50);
+  nh.param<double>("epsilon", config_setting.epsilon_, 10);
   
 
   std::cout << "Sucessfully load parameters:" << std::endl;
@@ -1252,6 +1253,9 @@ void STDescManager::build_stdesc(
             single_descriptor.angle_[0] = fabs(5 * normal_1.dot(normal_2));
             single_descriptor.angle_[1] = fabs(5 * normal_1.dot(normal_3));
             single_descriptor.angle_[2] = fabs(5 * normal_3.dot(normal_2));
+            single_descriptor.normal1_ = normal_1;
+            single_descriptor.normal2_ = normal_2;
+            single_descriptor.normal3_ = normal_3;
             // single_descriptor.angle << 0, 0, 0;
             single_descriptor.frame_id_ = current_frame_id_;
             Eigen::Matrix3d triangle_positon;

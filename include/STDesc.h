@@ -85,6 +85,8 @@ typedef struct STDesc {
   Eigen::Vector3d vertex_B_;
   Eigen::Vector3d vertex_C_;
 
+  Eigen::Vector3d normal1_, normal2_, normal3_;
+
 
   Eigen::Matrix3d calculateReferenceFrame() const {
     // Eje X: Normalizado P3 - centroid
