@@ -423,6 +423,7 @@ void build_std_filter( const pcl::PointCloud<pcl::PointXYZINormal>::Ptr &corner_
         single_descriptor.frame_id_ = current_frame_id_;
 
         stds_vec.push_back(single_descriptor);
+
     }
 }
    
@@ -555,14 +556,14 @@ void updateMatrixAndKDTreeWithFiltering(Eigen::MatrixXf& mat, std::unique_ptr<na
     mat.resize(num_desc, 36);
 
     for (size_t i = 0; i < std_local_map.size(); ++i) {
-        addDescriptorToMatrix(mat, std_local_map[i], i);
+        addDescriptorToMatrix(mat, std_local_map[i], i); // aqui se añaden ya los descritproes filtrados al mapa STD_local
+
     }
 
     // Recrear el KD-Tree con la matriz actualizada
     index = std::make_unique<nanoflann::KDTreeEigenMatrixAdaptor<Eigen::MatrixXf>>(36, std::cref(mat), 10 /* max leaf */);
     index->index_->buildIndex();
 }
-
 int main(int argc, char **argv) {
     ros::init(argc, argv, "STD_descriptor");
     ros::NodeHandle nh;
@@ -634,18 +635,8 @@ int main(int argc, char **argv) {
                 ROS_INFO("++++++++++ Iniciando Extraccion de STD ++++++++");
             } else { 
                 
-            //    if (pose_vec.size()>0)                
-            //        pcl::transformPointCloud(*current_cloud, *current_cloud_world, pose_vec[pose_vec.size()-1]);  
-            //    else{
-            //        pcl::transformPointCloud(*current_cloud, *current_cloud_world, pose_iden);  
-            //    }      
-
-                // Eigen::Affine3d pose_diff = (pose_prev.inverse() * pose);
-
-                pcl::transformPointCloud(*current_cloud, *current_cloud_world, pose);
-                // pcl::transformPointCloud(*current_cloud, *current_cloud_diff, pose_diff);
+                pcl::transformPointCloud(*current_cloud, *current_cloud_world, pose_prev);
                 std_manager->GenerateSTDescs(current_cloud_world, stds_curr);
-
 
                 if (!stds_prev.empty()) {
                     visualization_msgs::MarkerArray marker_array;
@@ -710,12 +701,6 @@ int main(int argc, char **argv) {
                     pubSTD.publish(marker_array);
                 }
             }
-            // //////////// nube de puntos anterior
-            // pcl::transformPointCloud(*current_cloud, *current_cloud_world_prev, pose_prev);
-            // sensor_msgs::PointCloud2 output_cloud;
-            // pcl::toROSMsg(*current_cloud_world_prev, output_cloud);
-            // output_cloud.header.frame_id = "velodyne";  // O el frame_id que desees
-            // cloud_pub_prev.publish(output_cloud);}
 
             sensor_msgs::PointCloud2 output_cloud;
             pcl::toROSMsg(*current_cloud_world, output_cloud);
@@ -773,17 +758,15 @@ int main(int argc, char **argv) {
             Eigen::Vector3f colorVector_map(0.0f, 0.0f, 0.0f);  // negro
             publishLocalMap(std_local_map, marker_array_map,colorVector_map ,0.2);
             pubkeymap.publish(marker_array_map);
-            // visualization_msgs::Marker delete_marker_map;
-            // delete_marker_map.action = visualization_msgs::Marker::DELETEALL;
-            // marker_array_map.markers.clear();  // Asegúrate de que el array de marcadores esté vacío
-            // marker_array_map.markers.push_back(delete_marker_map);
-            // pubkeymap.publish(marker_array_map);
-                        
+
             ////////////////////////////////////////////////////////////////////////////////////////////////
 
              std::cout << "Pares encontrados: " << cont_desc_pairs << std::endl;
-
             // Añadir los nuevos descriptores de stds_curr a std_local_map
+            if(!init_std){
+                pcl::transformPointCloud(*current_cloud, *current_cloud_world, pose);
+                std_manager->GenerateSTDescs(current_cloud_world, stds_curr);
+            }
             std_local_map.insert(std_local_map.end(), stds_curr.begin(), stds_curr.end());
             //////////////////////////// Eliminacion de elementos por ventana ///////////////
             counts_per_iteration.push_back(stds_curr.size());
@@ -797,6 +780,7 @@ int main(int argc, char **argv) {
             ////////////////////////////////////////////////////////////////////////////////////
 
             // Actualizar la matriz con el filtrado por vertices
+
             updateMatrixAndKDTreeWithFiltering(mat, index, std_local_map, config_setting);
             //updateMatrixAndKDTree(mat, index, std_local_map);
 
@@ -837,4 +821,3 @@ int main(int argc, char **argv) {
 
     return 0;
 }
-
