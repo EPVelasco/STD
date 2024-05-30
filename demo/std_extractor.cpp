@@ -781,8 +781,8 @@ int main(int argc, char **argv) {
 
             // Actualizar la matriz con el filtrado por vertices
 
-            updateMatrixAndKDTreeWithFiltering(mat, index, std_local_map, config_setting);
-            //updateMatrixAndKDTree(mat, index, std_local_map);
+            //updateMatrixAndKDTreeWithFiltering(mat, index, std_local_map, config_setting);
+            updateMatrixAndKDTree(mat, index, std_local_map);
 
             ////// publicacion de nube de puntos en los vertices de los stds del MAPA filtrado
             pcl::PointCloud<pcl::PointXYZ>::Ptr std_map_pcl(new pcl::PointCloud<pcl::PointXYZ>);
